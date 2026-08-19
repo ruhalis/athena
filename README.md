@@ -6,12 +6,13 @@ See `TECHNICAL.md` and `jarvis/README.md`.
 
 ## Setup
 
+[uv](https://docs.astral.sh/uv/) manages Python 3.12 and dependencies (macOS, Linux, Windows).
+
 ```bash
+# once: brew install uv
 git clone git@github.com:<your-user>/jarvis.git
 cd jarvis
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 cp .env-example .env   # set OPENAI_API_KEY
 ```
 
@@ -31,7 +32,7 @@ curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
 ## Run
 
 ```bash
-python jarvis/services/jarvis_router.py
-python jarvis/services/jarvis_brain.py --daemon
-python jarvis/services/jarvis_dashboard.py
+uv run python jarvis/services/jarvis_router.py
+uv run python jarvis/services/jarvis_brain.py --daemon
+uv run python jarvis/services/jarvis_dashboard.py
 ```

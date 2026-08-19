@@ -42,7 +42,7 @@ jarvis/
 
 ## Environment
 
-Python 3.12 in `.venv`. Redis for the event bus. `python-dotenv` loads `.env`.
+Python 3.12 via [uv](https://docs.astral.sh/uv/) (`uv sync`, `.venv`). Redis for the event bus. `python-dotenv` loads `.env`.
 
 ```
 OPENAI_API_KEY

@@ -1,0 +1,23 @@
+[project]
+name = "jarvis"
+version = "0.1.0"
+description = "Text-only personal assistant for a 16 GB MacBook"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "python-dotenv",
+    "openai",
+    "hermes-agent",
+    "redis[hiredis]",
+    "mcp>=1.2,<2",
+    "rapidfuzz",
+    "pyyaml",
+    "aiohttp",
+    "fastapi",
+    "uvicorn[standard]",
+    "jinja2",
+    "websockets",
+    "httpx",
+]
+
+[tool.uv]
+package = false

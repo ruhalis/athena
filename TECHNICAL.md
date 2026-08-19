@@ -76,6 +76,8 @@ State machine: `IDLE` ↔ `PROCESSING`.
 
 ## 4. Environment
 
+Python 3.12 and deps: `uv sync` (see `pyproject.toml`). Keys live in repo-root `.env` (gitignored). `.env-example` is placeholders only.
+
 ```
 OPENAI_API_KEY           # required for default provider
 ANTHROPIC_API_KEY        # only if JARVIS_BRAIN_PROVIDER=anthropic
@@ -85,8 +87,6 @@ JARVIS_BRAIN_PROVIDER    # openai | local | anthropic
 JARVIS_BRAIN_MODEL       # optional override
 JARVIS_BRAIN_HARNESS     # openai (default) | hermes
 ```
-
-Keys live in repo-root `.env` (gitignored). `.env-example` is placeholders only.
 
 ---
 

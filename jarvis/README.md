@@ -27,37 +27,35 @@ jarvis/
 ## Prereqs
 
 ```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-pip install -r ../requirements.txt
-cp ../.env-example ../.env   # then set OPENAI_API_KEY
+# from repo root
+uv sync
+cp .env-example .env   # then set OPENAI_API_KEY
 redis-server &
 ```
 
 ## Run
 
 ```bash
-cd jarvis
-python services/jarvis_router.py
-python services/jarvis_brain.py --daemon
-python services/jarvis_dashboard.py   # http://127.0.0.1:8088
+uv run python jarvis/services/jarvis_router.py
+uv run python jarvis/services/jarvis_brain.py --daemon
+uv run python jarvis/services/jarvis_dashboard.py   # http://127.0.0.1:8088
 ```
 
 One-shot:
 
 ```bash
-python services/jarvis_brain.py "hello, introduce yourself briefly"
+uv run python jarvis/services/jarvis_brain.py "hello, introduce yourself briefly"
 ```
 
 Simulate a dashboard message:
 
 ```bash
-python services/jarvis_router.py --say "good morning"
+uv run python jarvis/services/jarvis_router.py --say "good morning"
 ```
 
 Provider switch (explicit, not a fallback):
 
 ```bash
-JARVIS_BRAIN_PROVIDER=local python services/jarvis_brain.py --daemon
-JARVIS_BRAIN_PROVIDER=anthropic python services/jarvis_brain.py --daemon
+JARVIS_BRAIN_PROVIDER=local uv run python jarvis/services/jarvis_brain.py --daemon
+JARVIS_BRAIN_PROVIDER=anthropic uv run python jarvis/services/jarvis_brain.py --daemon
 ```

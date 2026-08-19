@@ -7,7 +7,7 @@ This build is **text-only**, ChatGPT-first, **no fallbacks**.
 ## Done
 
 - [x] Remove unused audio/Jetson paths (CosyVoice, claw-code, `jarvis_voice.py`, `jarvis_tts.py`)
-- [x] Slim `requirements.txt`; `.env` / `.env-example` for `OPENAI_API_KEY`
+- [x] uv project (`pyproject.toml` + `uv.lock`); `.env` / `.env-example` for `OPENAI_API_KEY`
 - [x] Brain: OpenAI tool loop; explicit `local` / `anthropic`; optional Hermes CLI harness
 - [x] Router: `user_text` → routines or `llm_request`; `speak` → `assistant_reply`
 - [x] MCP tools: `speak`, `ha_control`, `ha_query`, `set_timer`, `get_weather`, `memory_write`
@@ -17,19 +17,19 @@ This build is **text-only**, ChatGPT-first, **no fallbacks**.
 ## Run
 
 ```bash
-source .venv/bin/activate
+uv sync
 redis-server &
-python jarvis/services/jarvis_router.py
-python jarvis/services/jarvis_brain.py --daemon
-python jarvis/services/jarvis_dashboard.py
-python jarvis/services/jarvis_timers.py
-python jarvis/services/jarvis_display.py   # optional
+uv run python jarvis/services/jarvis_router.py
+uv run python jarvis/services/jarvis_brain.py --daemon
+uv run python jarvis/services/jarvis_dashboard.py
+uv run python jarvis/services/jarvis_timers.py
+uv run python jarvis/services/jarvis_display.py   # optional
 ```
 
 One-shot:
 
 ```bash
-python jarvis/services/jarvis_brain.py "hello, introduce yourself briefly"
+uv run python jarvis/services/jarvis_brain.py "hello, introduce yourself briefly"
 ```
 
 ## Later (not this build)
