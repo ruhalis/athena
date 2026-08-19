@@ -32,6 +32,7 @@ jarvis/
     ├── jarvis_brain.py
     ├── jarvis_router.py
     ├── jarvis_mcp_server.py
+    ├── jarvis_mcp_clients.py
     ├── jarvis_dashboard.py
     ├── jarvis_timers.py
     ├── jarvis_display.py
@@ -49,6 +50,8 @@ OPENAI_API_KEY
 ANTHROPIC_API_KEY          # optional, explicit switch
 HA_URL / HA_TOKEN
 JARVIS_BRAIN_PROVIDER      # openai | local | anthropic
+OBSIDIAN_API_KEY           # optional; Local REST API plugin
+LINEAR_API_KEY             # optional; Linear personal API key
 ```
 
 ## Later (not this build)

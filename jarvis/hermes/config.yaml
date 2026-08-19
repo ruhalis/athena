@@ -1,6 +1,7 @@
 # Hermes profile for Jarvis (optional harness).
 # Copy into ~/.hermes/config.yaml or merge. Do not enable terminal/file tools
 # for voice/text assistant turns.
+# Obsidian needs OBSIDIAN_API_KEY; Linear needs LINEAR_API_KEY (from .env).
 
 model:
   default: gpt-4.1
@@ -13,3 +14,15 @@ mcp_servers:
       - "/Users/ruhalis/projects/jarvis/jarvis/services/jarvis_mcp_server.py"
     tools:
       include: [speak, ha_control, ha_query, set_timer, get_weather, memory_write]
+  obsidian:
+    command: uvx
+    args:
+      - mcp-obsidian
+  linear:
+    command: npx
+    args:
+      - -y
+      - mcp-remote
+      - https://mcp.linear.app/mcp
+      - --header
+      - "Authorization: Bearer ${LINEAR_API_KEY}"

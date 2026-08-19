@@ -63,6 +63,7 @@ Only when `JARVIS_BRAIN_PROVIDER=local`. Serve a **3-bit MLX** (or IQ2 GGUF) bui
 | `jarvis_brain.py` | Tool loop / Hermes CLI. Subscribes to `llm_request`. |
 | `jarvis_router.py` | Fuzzy YAML routines. Subscribes to `user_text`. |
 | `jarvis_mcp_server.py` | MCP stdio tools for Hermes. |
+| `jarvis_mcp_clients.py` | Optional Obsidian / Linear MCP for the default brain. |
 | `jarvis_dashboard.py` | FastAPI chat UI. |
 | `jarvis_timers.py` | Fires `speak` on timer expiry. |
 | `jarvis_display.py` | Redis `state_change` → WiFi WebSocket. |
@@ -86,6 +87,8 @@ REDIS_URL                # default redis://127.0.0.1:6379/0
 JARVIS_BRAIN_PROVIDER    # openai | local | anthropic
 JARVIS_BRAIN_MODEL       # optional override
 JARVIS_BRAIN_HARNESS     # openai (default) | hermes
+OBSIDIAN_API_KEY         # optional; Obsidian Local REST API
+LINEAR_API_KEY           # optional; Linear personal API key
 ```
 
 ---

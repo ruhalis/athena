@@ -25,7 +25,8 @@ from openai import AsyncOpenAI
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import jarvis_bus as bus  # noqa: E402
 from jarvis_env import jarvis_home, load_config, load_env  # noqa: E402
-from jarvis_tools import OPENAI_TOOLS, dispatch_tool, log_event, speak  # noqa: E402
+from jarvis_mcp_clients import McpHub  # noqa: E402
+from jarvis_tools import OPENAI_TOOLS, TOOL_HANDLERS, dispatch_tool, log_event, speak  # noqa: E402
 
 load_env()
 
@@ -95,19 +96,35 @@ def _openai_client(name: str, spec: dict) -> AsyncOpenAI:
     raise SystemExit(f"[brain] unsupported provider {name!r}")
 
 
-async def _run_openai_turn(client: AsyncOpenAI, model: str, user_text: str) -> None:
+def _openai_tools(hub: McpHub | None) -> list[dict[str, Any]]:
+    extra = hub.openai_tools() if hub else []
+    return [*OPENAI_TOOLS, *extra]
+
+
+async def _run_tool(name: str, arguments: dict, hub: McpHub | None) -> str:
+    if name in TOOL_HANDLERS:
+        return dispatch_tool(name, arguments)
+    if hub is not None and hub.has_tool(name):
+        return await hub.call(name, arguments)
+    return f"Unknown tool: {name}"
+
+
+async def _run_openai_turn(
+    client: AsyncOpenAI, model: str, user_text: str, hub: McpHub | None
+) -> None:
     system = _load_system()
     history = _load_session()
     messages: list[dict[str, Any]] = [{"role": "system", "content": system}, *history]
     messages.append({"role": "user", "content": user_text})
     log_event({"type": "user", "text": user_text, "model": model})
+    tools = _openai_tools(hub)
 
     spoke = False
     for _ in range(MAX_TOOL_ITERS):
         response = await client.chat.completions.create(
             model=model,
             messages=messages,
-            tools=OPENAI_TOOLS,
+            tools=tools,
             tool_choice="auto",
         )
         choice = response.choices[0]
@@ -145,7 +162,7 @@ async def _run_openai_turn(client: AsyncOpenAI, model: str, user_text: str) -> N
             args = json.loads(tc.function.arguments or "{}")
             if tc.function.name == "speak":
                 spoke = True
-            result = dispatch_tool(tc.function.name, args)
+            result = await _run_tool(tc.function.name, args, hub)
             messages.append(
                 {
                     "role": "tool",
@@ -184,9 +201,9 @@ def _hermes_cmd(spec: dict, user_text: str) -> list[str]:
     return cmd
 
 
-def _anthropic_tools() -> list[dict[str, Any]]:
+def _anthropic_tools(hub: McpHub | None) -> list[dict[str, Any]]:
     out = []
-    for item in OPENAI_TOOLS:
+    for item in _openai_tools(hub):
         fn = item["function"]
         out.append(
             {
@@ -198,7 +215,7 @@ def _anthropic_tools() -> list[dict[str, Any]]:
     return out
 
 
-async def _run_anthropic_turn(model: str, user_text: str) -> None:
+async def _run_anthropic_turn(model: str, user_text: str, hub: McpHub | None) -> None:
     import httpx
 
     system = _load_system()
@@ -217,7 +234,7 @@ async def _run_anthropic_turn(model: str, user_text: str) -> None:
                 "model": model,
                 "max_tokens": 1024,
                 "system": system,
-                "tools": _anthropic_tools(),
+                "tools": _anthropic_tools(hub),
                 "messages": messages,
             }
             r = await http.post("https://api.anthropic.com/v1/messages", headers=headers, json=body)
@@ -234,7 +251,7 @@ async def _run_anthropic_turn(model: str, user_text: str) -> None:
                 args = block.get("input") or {}
                 if name == "speak":
                     spoke = True
-                result = dispatch_tool(name, args)
+                result = await _run_tool(name, args, hub)
                 results.append(
                     {
                         "type": "tool_result",
@@ -269,7 +286,7 @@ async def _run_hermes_turn(spec: dict, user_text: str) -> None:
         speak(text, "en")
 
 
-async def handle_user_turn(user_text: str, redis_client) -> None:
+async def handle_user_turn(user_text: str, redis_client, hub: McpHub | None) -> None:
     cfg = load_config()
     name, spec = resolve_provider(cfg)
     require_credentials(name, spec)
@@ -283,10 +300,10 @@ async def handle_user_turn(user_text: str, redis_client) -> None:
         if harness == "hermes":
             await _run_hermes_turn(spec, user_text)
         elif name == "anthropic":
-            await _run_anthropic_turn(model, user_text)
+            await _run_anthropic_turn(model, user_text, hub)
         else:
             client = _openai_client(name, spec)
-            await _run_openai_turn(client, model, user_text)
+            await _run_openai_turn(client, model, user_text, hub)
     except Exception:
         if redis_client is not None:
             await bus.publish(redis_client, bus.CH_BRAIN_DONE, {"ok": False})
@@ -298,15 +315,16 @@ async def handle_user_turn(user_text: str, redis_client) -> None:
 async def daemon() -> int:
     redis_client = bus.get_client()
     print("[brain] subscribed to llm_request", file=sys.stderr)
-    async for _chan, payload in bus.subscribe(redis_client, bus.CH_LLM_REQUEST):
-        text = (payload.get("text") or "").strip()
-        if not text:
-            continue
-        try:
-            await handle_user_turn(text, redis_client)
-        except Exception as exc:
-            log_event({"type": "error", "where": "brain", "error": str(exc)})
-            print(f"[brain] error: {exc}", file=sys.stderr)
+    async with McpHub() as hub:
+        async for _chan, payload in bus.subscribe(redis_client, bus.CH_LLM_REQUEST):
+            text = (payload.get("text") or "").strip()
+            if not text:
+                continue
+            try:
+                await handle_user_turn(text, redis_client, hub)
+            except Exception as exc:
+                log_event({"type": "error", "where": "brain", "error": str(exc)})
+                print(f"[brain] error: {exc}", file=sys.stderr)
     return 0
 
 
@@ -317,7 +335,8 @@ async def one_shot(user_text: str) -> int:
     except Exception:
         redis_client = None
         print("[brain] redis unavailable; speak will log only", file=sys.stderr)
-    await handle_user_turn(user_text, redis_client)
+    async with McpHub() as hub:
+        await handle_user_turn(user_text, redis_client, hub)
     return 0
 
 
