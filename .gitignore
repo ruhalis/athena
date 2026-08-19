@@ -202,12 +202,3 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# Marimo
-marimo/_static/
-marimo/_lsp/
-__marimo__/
-jarvis/logs/*.jsonl
-jarvis/sessions/*.json
-jarvis/cache/
-jarvis/routines/custom.yaml
-jarvis/services/firmware/jarvis_matrix/include/secrets.h

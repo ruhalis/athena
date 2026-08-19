@@ -5,12 +5,12 @@ Waveshare **RGB-Matrix-P3 64×64** (HUB75) driven by an **ESP32-S3** over **Wi-F
 ## Architecture
 
 ```
-Redis state_change  →  jarvis_display.py  →  WebSocket JSON  →  ESP32-S3  →  HUB75
+jarvis.py  →  WebSocket JSON  →  ESP32-S3  →  HUB75
 ```
 
 MCU: ESP32-S3 + HUB75 adapter. Dedicated **5 V / 4 A** PSU. mDNS name `jarvis-matrix.local`.
 
-Firmware: `jarvis/services/firmware/jarvis_matrix/` (PlatformIO). Copy `include/secrets.h.example` to `include/secrets.h`.
+Firmware: `firmware/jarvis_matrix/` (PlatformIO). Copy `include/secrets.h.example` to `include/secrets.h`.
 
 ## Protocol
 
@@ -39,4 +39,4 @@ display:
   brightness_active: 180
 ```
 
-If the socket cannot connect, `jarvis_display.py` logs the error and does not open a serial port.
+If the socket cannot connect, `jarvis.py` logs the error and continues the turn. It does not open a serial port.
