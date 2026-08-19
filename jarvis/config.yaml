@@ -1,61 +1,57 @@
-# Jarvis runtime config. Loaded by router + brain.
-# Env vars override values here (REDIS_URL, HA_URL, HA_TOKEN, JARVIS_HOME).
+# Jarvis runtime config. Env vars override (REDIS_URL, HA_URL, HA_TOKEN,
+# OPENAI_API_KEY, ANTHROPIC_API_KEY, JARVIS_BRAIN_PROVIDER).
 
 redis_url: redis://127.0.0.1:6379/0
 
 router:
-  # rapidfuzz partial_ratio threshold (0-100). Below this, forward to LLM.
   fuzzy_threshold: 80
   routines_paths:
     - routines/default.yaml
     - routines/custom.yaml
 
 brain:
-  # Lock Claude to only the speak tool for now. Phase 3 expands this.
-  allowed_tools:
-    - mcp__jarvis__speak
-  # How long to wait on a claude subprocess before giving up (seconds).
-  timeout_seconds: 30
+  default_provider: openai
+  timeout_seconds: 120
+  providers:
+    openai:
+      provider: openai-api
+      model: gpt-4.1
+    local:
+      provider: custom
+      base_url: http://127.0.0.1:1234/v1
+      model: qwen3.8-27b-3bit
+    anthropic:
+      provider: anthropic
+      model: claude-sonnet-4-6
 
 home_assistant:
   url: http://192.168.1.x:8123
   # token: pulled from HA_TOKEN env var
+  confirm_domains:
+    - lock
+    - alarm_control_panel
+    - cover
+    - garage_door
+  confirm_services:
+    - lock.lock
+    - lock.unlock
+    - alarm_control_panel.alarm_arm_away
+    - alarm_control_panel.alarm_disarm
+    - cover.open_cover
+    - cover.close_cover
 
-voice:
-  # Mode:
-  #   "auto"  — try mic pipeline (openWakeWord + Silero VAD + Parakeet); fall back to stdin if deps missing.
-  #   "mic"   — real mic pipeline (Jetson). Errors out if a component is missing.
-  #   "stdin" — read lines from stdin; each line publishes wake_detected + stt_result. Dev/test only.
-  #   "null"  — start, do nothing. For services that just need the process running.
-  mode: auto
-  # Wake word(s) for openWakeWord. The "jarvis" model ships with the package.
-  wake_models:
-    - jarvis
-  wake_threshold: 0.5
-  # Silero VAD endpoint detection.
-  vad_min_silence_ms: 500
-  vad_speech_pad_ms: 200
-  # STT
-  parakeet_model: nvidia/parakeet-tdt-0.6b-v3
-  # Audio capture
-  sample_rate: 16000
-  frame_ms: 20
-  # Mic device index (None = default input). Use `python -m sounddevice` to list.
-  input_device: null
-  # Pre-warm the brain on stable partials (B4). Off until brain wires the listener.
-  prewarm_partials: false
+weather:
+  latitude: 43.2389
+  longitude: 76.8897
+  timezone: Asia/Almaty
 
-tts:
-  # Default language when none specified.
-  default_language: en
-  # Engine: "kokoro" (Jetson), "say" (macOS dev), "espeak" (Linux dev), "null" (silent — log only).
-  # If "auto", picks the best available at startup.
-  engine: auto
-  # Kokoro voice id (when engine=kokoro). See kokoro docs for full list.
-  kokoro_voice: af_heart
-  kokoro_speed: 1.0
-  # Cache pre-rendered phrases (WAV) here to avoid resynthesizing common acks.
-  cache_dir: cache/tts
-  # Publish ~30 Hz RMS while speaking (for the RGB matrix EQ animation).
-  publish_levels: true
-  level_hz: 30
+display:
+  enabled: true
+  transport: wifi
+  url: ws://jarvis-matrix.local/ws
+  brightness_idle: 40
+  brightness_active: 180
+
+dashboard:
+  host: 127.0.0.1
+  port: 8088

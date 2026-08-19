@@ -1,76 +1,58 @@
-"""MCP server — exposes Jarvis custom tools.
-
-Phase 2: `speak` publishes to Redis `tts_request` so the TTS service can
-pick it up. Local JSONL logging is preserved for debugging/replay.
-
-Redis publish is best-effort: if Redis is down we still log + return so the
-LLM sees a successful tool result. (The TTS service is the source of truth
-for whether audio actually played; it emits `tts_done` on success.)
-"""
+"""MCP server — Jarvis tools over stdio for Hermes / other MCP clients."""
 from __future__ import annotations
 
-import datetime as dt
-import json
-import os
 import sys
 from pathlib import Path
 
-import redis
-from mcp.server.fastmcp import FastMCP
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+from jarvis_env import load_env  # noqa: E402
+from jarvis_tools import get_weather as _get_weather  # noqa: E402
+from jarvis_tools import ha_control as _ha_control
+from jarvis_tools import ha_query as _ha_query
+from jarvis_tools import memory_write as _memory_write
+from jarvis_tools import set_timer as _set_timer
+from jarvis_tools import speak as _speak
+from mcp.server.fastmcp import FastMCP  # noqa: E402
 
-REDIS_URL = os.environ.get("REDIS_URL", "redis://127.0.0.1:6379/0")
-CH_TTS_REQUEST = "tts_request"
-
+load_env()
 server = FastMCP("jarvis")
-
-# Synchronous client: MCP tool handlers are sync here, and publish is cheap.
-try:
-    _redis_client: redis.Redis | None = redis.from_url(REDIS_URL, decode_responses=True)
-    _redis_client.ping()
-except Exception as exc:  # pragma: no cover — dev may run without redis
-    print(f"[mcp] redis unavailable ({exc}); speak will log only", file=sys.stderr)
-    _redis_client = None
-
-
-def _log_spoken(text: str, language: str) -> None:
-    log_file = LOG_DIR / f"{dt.date.today().isoformat()}.jsonl"
-    entry = {
-        "ts": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "type": "speak",
-        "language": language,
-        "text": text,
-    }
-    with log_file.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 @server.tool()
 def speak(text: str, language: str = "en") -> str:
-    """Say something to the user via the speaker.
+    """Show a reply to the user. REQUIRED for every response. Never reply with bare text."""
+    return _speak(text, language)
 
-    This is the ONLY way to produce spoken output. Use it for every response.
 
-    Args:
-        text: The exact words to speak aloud.
-        language: BCP-47 short code — "en" or "ru".
-    """
-    _log_spoken(text, language)
-    print(f"[SPEAK:{language}] {text}", file=sys.stderr, flush=True)
-    if _redis_client is not None:
-        try:
-            _redis_client.publish(
-                CH_TTS_REQUEST,
-                json.dumps(
-                    {"text": text, "lang": language, "priority": "normal"},
-                    ensure_ascii=False,
-                ),
-            )
-        except Exception as exc:  # keep tool result successful either way
-            print(f"[mcp] redis publish failed: {exc}", file=sys.stderr)
-    return f"[Spoken in {language}]: {text}"
+@server.tool()
+def ha_control(entity_id: str, service: str, attributes: dict | None = None) -> str:
+    """Call a Home Assistant service. Locks, alarms, and garage need a typed yes."""
+    return _ha_control(entity_id, service, attributes or {})
+
+
+@server.tool()
+def ha_query(entity_id: str) -> str:
+    """Read a Home Assistant entity state."""
+    return _ha_query(entity_id)
+
+
+@server.tool()
+def set_timer(seconds: int, label: str = "timer") -> str:
+    """Set a timer in seconds. Jarvis will reply in text when it fires."""
+    return _set_timer(seconds, label)
+
+
+@server.tool()
+def get_weather() -> str:
+    """Current weather for the configured location."""
+    return _get_weather()
+
+
+@server.tool()
+def memory_write(bullet: str) -> str:
+    """Append one short memory bullet to CLAUDE.md."""
+    return _memory_write(bullet)
 
 
 if __name__ == "__main__":

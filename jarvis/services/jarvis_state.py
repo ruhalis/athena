@@ -1,14 +1,10 @@
-"""State machine for the voice loop.
+"""State machine for the text loop.
 
 States:
-    IDLE       — waiting for wake word
-    LISTENING  — wake heard, capturing speech
-    PROCESSING — running router / LLM / tools
-    SPEAKING   — TTS is playing audio
+    IDLE        — waiting for typed input
+    PROCESSING  — router / LLM / tools running
 
-Transitions are published on `state_change` so the dashboard and any other
-service can react. This module is intentionally small: it's a holder +
-publisher, not a policy engine. Callers decide when to transition.
+Transitions are published on `state_change`.
 """
 from __future__ import annotations
 
@@ -22,18 +18,12 @@ log = logging.getLogger(__name__)
 
 class State(str, enum.Enum):
     IDLE = "IDLE"
-    LISTENING = "LISTENING"
     PROCESSING = "PROCESSING"
-    SPEAKING = "SPEAKING"
 
 
-# Allowed transitions. Keep this conservative — anything missing will be
-# rejected (and logged), which makes bugs loud instead of quiet.
 _ALLOWED: dict[State, set[State]] = {
-    State.IDLE: {State.LISTENING, State.PROCESSING},
-    State.LISTENING: {State.PROCESSING, State.IDLE},
-    State.PROCESSING: {State.SPEAKING, State.IDLE},
-    State.SPEAKING: {State.IDLE, State.LISTENING, State.PROCESSING},  # barge-in
+    State.IDLE: {State.PROCESSING},
+    State.PROCESSING: {State.IDLE},
 }
 
 

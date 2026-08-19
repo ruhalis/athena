@@ -1,25 +1,12 @@
-"""Brain — AsyncAnthropic SDK adapter for Jarvis Mode A.
+"""Brain — Hermes-style tool loop. Default provider is ChatGPT (OpenAI API).
 
-Replaces the previous `claude -p` subprocess implementation. Now uses the
-Anthropic Python SDK directly so we get:
-
-  - explicit `cache_control: ephemeral` on system block + tool defs (A3)
-  - per-turn token usage logged to JSONL incl. cache_read_input_tokens
-  - cheap escalation from Haiku 4.5 → Sonnet 4.6 when Haiku omits speak (A5)
-  - local per-day session files at sessions/YYYY-MM-DD.json (A4 redo)
-
-The `speak` tool is implemented inline — it publishes to Redis `tts_request`,
-the same shape the MCP server used. This drops the MCP subprocess from the
-brain's tool path entirely; the MCP server stays available for other clients
-(claude CLI, claw-code) but is no longer on this hot path.
+No automatic fallback. The selected provider is the only provider. If the
+key is missing or the API errors, the turn fails.
 
 Usage:
 
-    # Daemon — subscribe to Redis llm_request:
     python jarvis_brain.py --daemon
-
-    # One-shot (manual testing):
-    python jarvis_brain.py "what's the weather like?"
+    python jarvis_brain.py "hello, introduce yourself briefly"
 """
 from __future__ import annotations
 
@@ -28,69 +15,30 @@ import asyncio
 import datetime as dt
 import json
 import os
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
 
-from anthropic import AsyncAnthropic
+from openai import AsyncOpenAI
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import jarvis_bus as bus  # noqa: E402
+from jarvis_env import jarvis_home, load_config, load_env  # noqa: E402
+from jarvis_tools import OPENAI_TOOLS, dispatch_tool, log_event, speak  # noqa: E402
 
-DEBUG = bool(os.environ.get("JARVIS_DEBUG"))
+load_env()
 
-JARVIS_HOME = Path(__file__).resolve().parent.parent
+JARVIS_HOME = jarvis_home()
 CLAUDE_MD = JARVIS_HOME / "CLAUDE.md"
-LOG_DIR = JARVIS_HOME / "logs"
 SESSION_DIR = JARVIS_HOME / "sessions"
-STATE_DIR = JARVIS_HOME / "cache"
-LOG_DIR.mkdir(parents=True, exist_ok=True)
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
-STATE_DIR.mkdir(parents=True, exist_ok=True)
 
-MODEL_DEFAULT = "claude-haiku-4-5-20251001"
-MODEL_ESCALATE = "claude-sonnet-4-6"
-MAX_TOKENS = 1024
-ESCALATION_DAILY_CAP = 20
-
-SPEAK_TOOL = {
-    "name": "speak",
-    "description": (
-        "Say something to the user via the speaker. This is the ONLY way to "
-        "produce spoken output — every response to the user MUST be a speak "
-        "call. Keep responses to 1-3 sentences."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "text": {
-                "type": "string",
-                "description": "The exact words to speak aloud.",
-            },
-            "language": {
-                "type": "string",
-                "enum": ["en", "ru"],
-                "description": "BCP-47 short code; default 'en'.",
-            },
-        },
-        "required": ["text"],
-    },
-    "cache_control": {"type": "ephemeral"},
-}
+MAX_TOOL_ITERS = 8
 
 
-# ---------- logging / sessions ----------
-
-def _log(event: dict) -> None:
-    log_file = LOG_DIR / f"{dt.date.today().isoformat()}.jsonl"
-    entry = {"ts": dt.datetime.now(dt.timezone.utc).isoformat(), **event}
-    with log_file.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
-
-def _session_path(today: dt.date | None = None) -> Path:
-    today = today or dt.date.today()
-    return SESSION_DIR / f"{today.isoformat()}.json"
+def _session_path() -> Path:
+    return SESSION_DIR / f"{dt.date.today().isoformat()}.json"
 
 
 def _load_session() -> list[dict]:
@@ -117,217 +65,271 @@ def _load_system() -> str:
     return "You are Jarvis. Always respond using the `speak` tool."
 
 
-# Escalation cap (per-day, persisted)
-
-def _escalation_state_path() -> Path:
-    return STATE_DIR / "escalation_state.json"
-
-
-def _escalations_today() -> int:
-    p = _escalation_state_path()
-    if not p.exists():
-        return 0
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return 0
-    if data.get("date") != dt.date.today().isoformat():
-        return 0
-    return int(data.get("count", 0))
+def resolve_provider(cfg: dict) -> tuple[str, dict]:
+    name = (os.environ.get("JARVIS_BRAIN_PROVIDER") or cfg.get("brain", {}).get("default_provider") or "openai").strip()
+    providers = (cfg.get("brain") or {}).get("providers") or {}
+    if name not in providers:
+        raise SystemExit(f"[brain] unknown provider {name!r}. Set JARVIS_BRAIN_PROVIDER to one of: {', '.join(providers)}")
+    return name, providers[name]
 
 
-def _bump_escalations() -> int:
-    count = _escalations_today() + 1
-    _escalation_state_path().write_text(
-        json.dumps({"date": dt.date.today().isoformat(), "count": count}),
-        encoding="utf-8",
-    )
-    return count
+def require_credentials(name: str, spec: dict) -> None:
+    if name == "openai":
+        if not os.environ.get("OPENAI_API_KEY"):
+            raise SystemExit("[brain] OPENAI_API_KEY not set")
+    elif name == "anthropic":
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            raise SystemExit("[brain] ANTHROPIC_API_KEY not set")
+    elif name == "local":
+        if not spec.get("base_url"):
+            raise SystemExit("[brain] local provider is missing base_url")
+    else:
+        raise SystemExit(f"[brain] unsupported provider {name!r}")
 
 
-# ---------- speak tool ----------
-
-async def _handle_speak(redis_client, tool_input: dict) -> str:
-    text = (tool_input.get("text") or "").strip()
-    language = tool_input.get("language") or "en"
-    _log({"type": "speak", "language": language, "text": text})
-    if redis_client is not None and text:
-        try:
-            await bus.publish(
-                redis_client,
-                bus.CH_TTS_REQUEST,
-                {"text": text, "lang": language, "priority": "normal"},
-            )
-        except Exception as exc:
-            print(f"[brain] tts_request publish failed: {exc}", file=sys.stderr)
-    print(f"<<SPEAK lang={language}>> {text}")
-    return f"[Spoken in {language}]: {text}"
+def _openai_client(name: str, spec: dict) -> AsyncOpenAI:
+    if name == "openai":
+        return AsyncOpenAI()
+    if name == "local":
+        return AsyncOpenAI(base_url=spec["base_url"], api_key=os.environ.get("OPENAI_API_KEY") or "local")
+    raise SystemExit(f"[brain] unsupported provider {name!r}")
 
 
-# ---------- core turn ----------
-
-async def _run_turn(
-    client: AsyncAnthropic,
-    redis_client,
-    user_text: str,
-    model: str,
-    system_text: str,
-    history: list[dict],
-) -> tuple[bool, list[dict]]:
-    """Run one user turn. Returns (spoke, updated_history).
-
-    `spoke` is True iff the model called `speak` at least once.
-    """
-    spoke = False
-    messages = list(history)
+async def _run_openai_turn(client: AsyncOpenAI, model: str, user_text: str) -> None:
+    system = _load_system()
+    history = _load_session()
+    messages: list[dict[str, Any]] = [{"role": "system", "content": system}, *history]
     messages.append({"role": "user", "content": user_text})
+    log_event({"type": "user", "text": user_text, "model": model})
 
-    # Tool-use loop. Cap iterations defensively.
-    for _ in range(6):
-        async with client.messages.stream(
+    spoke = False
+    for _ in range(MAX_TOOL_ITERS):
+        response = await client.chat.completions.create(
             model=model,
-            max_tokens=MAX_TOKENS,
-            system=[
-                {
-                    "type": "text",
-                    "text": system_text,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            tools=[SPEAK_TOOL],
             messages=messages,
-        ) as stream:
-            response = await stream.get_final_message()
-
+            tools=OPENAI_TOOLS,
+            tool_choice="auto",
+        )
+        choice = response.choices[0]
+        msg = choice.message
         usage = response.usage
-        _log(
+        log_event(
             {
                 "type": "usage",
                 "model": model,
-                "input_tokens": usage.input_tokens,
-                "output_tokens": usage.output_tokens,
-                "cache_creation_input_tokens": getattr(usage, "cache_creation_input_tokens", 0) or 0,
-                "cache_read_input_tokens": getattr(usage, "cache_read_input_tokens", 0) or 0,
-                "stop_reason": response.stop_reason,
+                "input_tokens": getattr(usage, "prompt_tokens", 0) or 0,
+                "output_tokens": getattr(usage, "completion_tokens", 0) or 0,
+                "finish_reason": choice.finish_reason,
             }
         )
-        if DEBUG:
-            print(
-                f"[brain] {model} stop={response.stop_reason} "
-                f"in={usage.input_tokens} out={usage.output_tokens} "
-                f"cache_read={getattr(usage, 'cache_read_input_tokens', 0)}",
-                file=sys.stderr,
-            )
+        tool_calls = msg.tool_calls or []
+        assistant_msg: dict[str, Any] = {
+            "role": "assistant",
+            "content": msg.content,
+        }
+        if tool_calls:
+            assistant_msg["tool_calls"] = [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in tool_calls
+            ]
+        messages.append(assistant_msg)
 
-        # Append assistant response (preserving tool_use blocks).
-        messages.append({"role": "assistant", "content": response.content})
-
-        tool_uses = [b for b in response.content if b.type == "tool_use"]
-        if not tool_uses:
-            # End of turn — no more tools requested.
+        if not tool_calls:
             break
 
-        tool_results: list[dict[str, Any]] = []
-        for block in tool_uses:
-            if block.name == "speak":
+        for tc in tool_calls:
+            args = json.loads(tc.function.arguments or "{}")
+            if tc.function.name == "speak":
                 spoke = True
-                result = await _handle_speak(redis_client, block.input or {})
-            else:
-                result = f"Unknown tool: {block.name}"
-            tool_results.append(
+            result = dispatch_tool(tc.function.name, args)
+            messages.append(
                 {
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
+                    "role": "tool",
+                    "tool_call_id": tc.id,
                     "content": result,
                 }
             )
-        messages.append({"role": "user", "content": tool_results})
 
-        if response.stop_reason != "tool_use":
+        if choice.finish_reason == "stop" and spoke:
             break
 
-    return spoke, messages
-
-
-async def handle_user_turn(
-    client: AsyncAnthropic,
-    redis_client,
-    user_text: str,
-) -> None:
-    system_text = _load_system()
-    history = _load_session()
-    _log({"type": "user", "text": user_text})
-
-    spoke, new_history = await _run_turn(
-        client, redis_client, user_text, MODEL_DEFAULT, system_text, history
-    )
-
-    if not spoke and _escalations_today() < ESCALATION_DAILY_CAP:
-        count = _bump_escalations()
-        _log({"type": "escalation", "to": MODEL_ESCALATE, "count_today": count})
-        if DEBUG:
-            print(f"[brain] escalating to {MODEL_ESCALATE} (#{count})", file=sys.stderr)
-        # Re-run from the original history so we don't carry the failed turn.
-        spoke, new_history = await _run_turn(
-            client, redis_client, user_text, MODEL_ESCALATE, system_text, history
-        )
-
+    persist = [m for m in messages if m.get("role") != "system"]
+    _save_session(persist)
     if not spoke:
-        # Model failed to call speak even after escalation — emit a fallback
-        # so the user isn't left in silence.
-        if redis_client is not None:
-            try:
-                await bus.publish(
-                    redis_client,
-                    bus.CH_TTS_REQUEST,
-                    {"text": "Apologies, sir — I lost my thread.", "lang": "en"},
+        log_event({"type": "no_speak", "user_text": user_text})
+        raise RuntimeError("model finished without calling speak")
+
+
+def _hermes_cmd(spec: dict, user_text: str) -> list[str]:
+    hermes = shutil.which("hermes")
+    if not hermes:
+        raise SystemExit("[brain] hermes is not installed")
+    provider = spec.get("provider") or "openai-api"
+    model = spec.get("model")
+    cmd = [
+        hermes,
+        "chat",
+        "--quiet",
+        "-q",
+        user_text,
+        "--provider",
+        provider,
+    ]
+    if model:
+        cmd.extend(["--model", model])
+    return cmd
+
+
+def _anthropic_tools() -> list[dict[str, Any]]:
+    out = []
+    for item in OPENAI_TOOLS:
+        fn = item["function"]
+        out.append(
+            {
+                "name": fn["name"],
+                "description": fn.get("description") or "",
+                "input_schema": fn.get("parameters") or {"type": "object", "properties": {}},
+            }
+        )
+    return out
+
+
+async def _run_anthropic_turn(model: str, user_text: str) -> None:
+    import httpx
+
+    system = _load_system()
+    history = [m for m in _load_session() if m.get("role") in ("user", "assistant")]
+    messages: list[dict[str, Any]] = [*history, {"role": "user", "content": user_text}]
+    log_event({"type": "user", "text": user_text, "model": model})
+    spoke = False
+    headers = {
+        "x-api-key": os.environ["ANTHROPIC_API_KEY"],
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+    }
+    async with httpx.AsyncClient(timeout=60.0) as http:
+        for _ in range(MAX_TOOL_ITERS):
+            body = {
+                "model": model,
+                "max_tokens": 1024,
+                "system": system,
+                "tools": _anthropic_tools(),
+                "messages": messages,
+            }
+            r = await http.post("https://api.anthropic.com/v1/messages", headers=headers, json=body)
+            r.raise_for_status()
+            data = r.json()
+            content = data.get("content") or []
+            messages.append({"role": "assistant", "content": content})
+            tool_uses = [b for b in content if b.get("type") == "tool_use"]
+            if not tool_uses:
+                break
+            results = []
+            for block in tool_uses:
+                name = block.get("name") or ""
+                args = block.get("input") or {}
+                if name == "speak":
+                    spoke = True
+                result = dispatch_tool(name, args)
+                results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.get("id"),
+                        "content": result,
+                    }
                 )
-            except Exception:
-                pass
-        _log({"type": "no_speak", "user_text": user_text})
+            messages.append({"role": "user", "content": results})
+    persist = [m for m in messages]
+    _save_session(persist)
+    if not spoke:
+        log_event({"type": "no_speak", "user_text": user_text})
+        raise RuntimeError("model finished without calling speak")
 
-    _save_session(new_history)
+
+async def _run_hermes_turn(spec: dict, user_text: str) -> None:
+    """Optional explicit Hermes CLI path (JARVIS_BRAIN_HARNESS=hermes)."""
+    cmd = _hermes_cmd(spec, user_text)
+    log_event({"type": "user", "text": user_text, "harness": "hermes", "cmd": cmd[0]})
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    stdout, stderr = await proc.communicate()
+    if proc.returncode != 0:
+        err = stderr.decode("utf-8", errors="replace")
+        log_event({"type": "error", "where": "hermes", "error": err})
+        raise RuntimeError(f"hermes exited {proc.returncode}: {err}")
+    text = stdout.decode("utf-8", errors="replace").strip()
+    if text:
+        speak(text, "en")
 
 
-# ---------- daemon / one-shot ----------
+async def handle_user_turn(user_text: str, redis_client) -> None:
+    cfg = load_config()
+    name, spec = resolve_provider(cfg)
+    require_credentials(name, spec)
+    model = os.environ.get("JARVIS_BRAIN_MODEL") or spec.get("model")
+    harness = os.environ.get("JARVIS_BRAIN_HARNESS") or "openai"
+
+    if redis_client is not None:
+        await bus.publish(redis_client, bus.CH_BRAIN_STATE, {"provider": name, "model": model})
+
+    try:
+        if harness == "hermes":
+            await _run_hermes_turn(spec, user_text)
+        elif name == "anthropic":
+            await _run_anthropic_turn(model, user_text)
+        else:
+            client = _openai_client(name, spec)
+            await _run_openai_turn(client, model, user_text)
+    except Exception:
+        if redis_client is not None:
+            await bus.publish(redis_client, bus.CH_BRAIN_DONE, {"ok": False})
+        raise
+    if redis_client is not None:
+        await bus.publish(redis_client, bus.CH_BRAIN_DONE, {"ok": True})
+
 
 async def daemon() -> int:
-    client = AsyncAnthropic()
     redis_client = bus.get_client()
-    print("[brain] subscribed to llm_request (SDK mode)", file=sys.stderr)
+    print("[brain] subscribed to llm_request", file=sys.stderr)
     async for _chan, payload in bus.subscribe(redis_client, bus.CH_LLM_REQUEST):
         text = (payload.get("text") or "").strip()
         if not text:
             continue
         try:
-            await handle_user_turn(client, redis_client, text)
+            await handle_user_turn(text, redis_client)
         except Exception as exc:
-            _log({"type": "error", "where": "brain", "error": str(exc)})
+            log_event({"type": "error", "where": "brain", "error": str(exc)})
             print(f"[brain] error: {exc}", file=sys.stderr)
     return 0
 
 
 async def one_shot(user_text: str) -> int:
-    client = AsyncAnthropic()
     try:
         redis_client = bus.get_client()
         await redis_client.ping()
     except Exception:
         redis_client = None
         print("[brain] redis unavailable; speak will log only", file=sys.stderr)
-    await handle_user_turn(client, redis_client, user_text)
+    await handle_user_turn(user_text, redis_client)
     return 0
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Jarvis brain (Anthropic SDK)")
-    parser.add_argument("--daemon", action="store_true", help="subscribe to Redis llm_request")
+    parser = argparse.ArgumentParser(description="Jarvis brain (ChatGPT / explicit provider)")
+    parser.add_argument("--daemon", action="store_true")
     parser.add_argument("text", nargs="*", help="one-shot input text")
     args = parser.parse_args()
 
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("[brain] ANTHROPIC_API_KEY not set", file=sys.stderr)
-        return 2
+    cfg = load_config()
+    name, spec = resolve_provider(cfg)
+    require_credentials(name, spec)
 
     if args.daemon:
         return asyncio.run(daemon())

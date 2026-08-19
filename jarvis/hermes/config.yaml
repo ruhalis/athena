@@ -1,0 +1,15 @@
+# Hermes profile for Jarvis (optional harness).
+# Copy into ~/.hermes/config.yaml or merge. Do not enable terminal/file tools
+# for voice/text assistant turns.
+
+model:
+  default: gpt-4.1
+  provider: openai-api
+
+mcp_servers:
+  jarvis:
+    command: "/Users/ruhalis/projects/jarvis/.venv/bin/python"
+    args:
+      - "/Users/ruhalis/projects/jarvis/jarvis/services/jarvis_mcp_server.py"
+    tools:
+      include: [speak, ha_control, ha_query, set_timer, get_weather, memory_write]

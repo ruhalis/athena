@@ -1,3 +1,0 @@
-[submodule "vendor/CosyVoice"]
-	path = vendor/CosyVoice
-	url = https://github.com/FunAudioLLM/CosyVoice.git

@@ -1,49 +1,37 @@
-# jarvis
+# Jarvis
+
+Text-only assistant for a 16 GB MacBook. Default brain is **ChatGPT** (`OPENAI_API_KEY` in `.env`). Local Qwen3.8-27B and Anthropic are explicit switches. No automatic fallback. No STT/TTS/wake word in this build.
+
+See `TECHNICAL.md` and `jarvis/README.md`.
 
 ## Setup
 
 ```bash
-git clone --recursive https://github.com/<your-user>/jarvis.git
-# or
-git clone --recursive git@github.com:<your-user>/jarvis.git
+git clone git@github.com:<your-user>/jarvis.git
 cd jarvis
-python -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
+pip install -r requirements.txt
+cp .env-example .env   # set OPENAI_API_KEY
 ```
 
-### Install on Jetson Orin Nano (JetPack 6.2)
+Redis is required:
 
 ```bash
-# PyTorch for JetPack 6.2
-pip install torch==2.8.0 torchvision==0.23.0 --index-url=https://pypi.jetson-ai-lab.io/jp6/cu126
-
-# Python dependencies
-pip install -r requirements.txt
+brew install redis && brew services start redis
 ```
 
-STT uses Parakeet-TDT-0.6b-v3 via NeMo (TensorRT export through NeMo's
-own tooling). See `TECHNICAL.md` for the full pipeline.
-
-### CosyVoice TTS (optional — voice cloning, Phase 5)
+Optional Hermes CLI (explicit harness, `JARVIS_BRAIN_HARNESS=hermes`):
 
 ```bash
-# Install CosyVoice dependencies (from vendored submodule)
-cd vendor/CosyVoice
-pip install -r requirements.txt
-cd ../..
-
-# System dependency
-sudo apt-get install sox libsox-dev
-
-# Download model (~2GB)
-python -c "
-from huggingface_hub import snapshot_download
-snapshot_download('FunAudioLLM/CosyVoice2-0.5B',
-                  local_dir='vendor/CosyVoice/pretrained_models/CosyVoice2-0.5B')
-"
-
-# NOTE: Do NOT install the ttsfrd .whl on Jetson — it's x86_64 only.
-# CosyVoice falls back to wetext automatically.
+curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
+# merge jarvis/hermes/config.yaml into ~/.hermes/config.yaml
 ```
 
-> **Note:** macOS is not supported — CUDA/TensorRT require an NVIDIA GPU.
+## Run
+
+```bash
+python jarvis/services/jarvis_router.py
+python jarvis/services/jarvis_brain.py --daemon
+python jarvis/services/jarvis_dashboard.py
+```
