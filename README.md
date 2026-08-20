@@ -1,4 +1,4 @@
-# Jarvis
+# Athena
 
 Text-only assistant for a 16 GB MacBook. Runs on **Hermes Agent 0.20.4**. Default brain is **ChatGPT** (`openai-api`, `OPENAI_API_KEY`). No automatic fallback.
 
@@ -16,8 +16,8 @@ Keep the official engine at `~/.hermes/hermes-agent` (`hermes update` stays easy
 One-time on this machine:
 
 ```bash
-cd /Users/ruhalis/projects/jarvis
-hermes config set terminal.cwd /Users/ruhalis/projects/jarvis
+cd /Users/ruhalis/projects/athena
+hermes config set terminal.cwd /Users/ruhalis/projects/athena
 hermes skills trust
 # already set in ~/.hermes/.env: HERMES_ENABLE_PROJECT_PLUGINS=true
 ```

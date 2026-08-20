@@ -1,8 +1,8 @@
-# Jarvis
+# Athena
 
 Personal text-only assistant. Brain is ChatGPT via `openai-api` (`OPENAI_API_KEY`). Do not use a fallback provider.
 
-This git repo is the Jarvis customization layer. Do not edit `~/.hermes/hermes-agent` (upstream). Put our changes here:
+This git repo is the Athena customization layer. Do not edit `~/.hermes/hermes-agent` (upstream). Put our changes here:
 
 - Project rules: this file (`HERMES.md`)
 - Skills: `.hermes/skills/<name>/SKILL.md`
