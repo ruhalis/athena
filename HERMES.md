@@ -37,3 +37,5 @@ When the user asks for a morning brief, meeting prep, or "what's on my plate tod
 ### Cron
 
 Job *definitions* belong in `cron/*.example.json` in this repo. Live jobs belong on one always-on machine (`~/.hermes/cron/jobs.json`) with the Hermes gateway running. Do not create the same job on two laptops.
+
+To install or refresh live jobs from the examples (gateway machine only): `./scripts/sync-cron.sh`, or `./scripts/bootstrap.sh --cron`. After the first success, later bootstraps on that machine keep jobs in sync.

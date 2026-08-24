@@ -9,7 +9,7 @@ cd /path/to/athena
 ./scripts/bootstrap.sh
 ```
 
-The script sets `terminal.cwd` and project-skill trust to this checkout, ensures Linear is declared in Hermes config, and prints what still needs a browser login.
+The script sets `terminal.cwd` and project-skill trust to this checkout, ensures Linear is declared in Hermes config, and prints what still needs a browser login. On the **one always-on gateway Mac**, pass `--cron` so routines in `cron/*.example.json` are created or updated.
 
 ## What lives where
 
@@ -39,7 +39,7 @@ The script sets `terminal.cwd` and project-skill trust to this checkout, ensures
 5. Run `./scripts/bootstrap.sh`.
 6. Linear: `hermes mcp login linear`, then start a new Hermes session.
 7. Google: if this machine has no `~/.hermes/google_token.json` yet, finish the skill’s `--auth-url` / `--auth-code` flow once.
-8. Point cron at **one always-on machine**. Jobs only fire while the Hermes gateway is running (`hermes gateway`). Do not enable the same jobs on two laptops.
+8. Point cron at **one always-on machine**. On that Mac: `./scripts/bootstrap.sh --cron` (or `./scripts/sync-cron.sh`). Jobs only fire while the Hermes gateway is running (`hermes gateway`). Do not enable the same jobs on two laptops. After the first `--cron` / `sync-cron.sh` success, later bootstraps on that machine keep jobs in sync.
 
 Full machine move (same you, new computer): `hermes backup` / `hermes import`, then encrypt the zip. That copies secrets. For a second laptop, use this repo + re-login instead.
 
@@ -53,15 +53,14 @@ In a **new** Hermes session (cwd = this repo):
 
 ## Adding a routine later
 
-1. Copy `cron/morning-brief.example.json` (or write a new example next to it).
-2. Create the live job on the scheduler machine only:
+1. Copy `cron/morning-brief.example.json` (or write a new JSON next to it). Required fields: `name`, `schedule`, `prompt`. Optional: `deliver` (default `telegram`), `skills`, `workdir` (`repo` = this checkout).
+2. On the gateway Mac only:
 
    ```bash
-   hermes cron create "every 1d at 08:00" "$(cat cron/morning-brief.example.json | python3 -c 'import json,sys; print(json.load(sys.stdin)["prompt"])')" \
-     --name morning-brief --deliver telegram --skill google-workspace --skill morning-brief
+   ./scripts/sync-cron.sh
    ```
 
-   Or ask Hermes in chat: “create this cron job from `cron/morning-brief.example.json`”.
+   That creates missing jobs and updates existing ones that share the same `name`. Use `--dry-run` first if you want to see the actions.
 3. Commit the example JSON. Leave `~/.hermes/cron/jobs.json` untracked.
 
 Delivery uses `TELEGRAM_HOME_CHANNEL`. If nothing is configured, output stays local under `~/.hermes/cron/output/`.

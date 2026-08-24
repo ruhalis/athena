@@ -21,7 +21,7 @@ cd /path/to/athena
 ./scripts/bootstrap.sh
 ```
 
-That sets `terminal.cwd` and skill trust to this checkout, ensures Linear is declared, and reports missing env/logins. Then start Hermes from here (`hermes chat`) or rely on `terminal.cwd` so Telegram/CLI both use this project.
+That sets `terminal.cwd` and skill trust to this checkout, ensures Linear is declared, and reports missing env/logins. On the **gateway** Mac, add `--cron` to install scheduled jobs from `cron/*.example.json`. Then start Hermes from here (`hermes chat`) or rely on `terminal.cwd` so Telegram/CLI both use this project.
 
 | Customize | Where | Notes |
 |---|---|---|
@@ -30,5 +30,5 @@ That sets `terminal.cwd` and skill trust to this checkout, ensures Linear is dec
 | Skills | `.hermes/skills/` | After `hermes skills trust` |
 | Tools / hooks | `.hermes/plugins/` | Enable with `hermes plugins enable <name>` |
 | MCP servers | `mcp.json` | Login tokens stay in `~/.hermes/mcp-tokens/` |
-| Cron templates | `cron/*.example.json` | Live jobs: `~/.hermes/cron/` on one gateway machine |
+| Cron templates | `cron/*.example.json` | Live jobs via `./scripts/sync-cron.sh` on one gateway machine |
 | Core Hermes | don't fork | Use plugins instead of patching `~/.hermes/hermes-agent` |

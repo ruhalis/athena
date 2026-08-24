@@ -2,6 +2,7 @@
   "name": "morning-brief",
   "schedule": "every 1d at 08:00",
   "deliver": "telegram",
+  "workdir": "repo",
   "skills": ["google-workspace", "morning-brief"],
   "prompt": "Produce this morning's brief for Asia/Almaty. Load the morning-brief skill. Pull Google Calendar and Gmail via google-workspace (daily-brief procedure) and Linear via the linear MCP (list_issues with assignee me). Deliver: (1) a short summary of the day, (2) Linear work that should be done today, (3) today's calendar with conflicts and prep, (4) only email that changes priority or follow-up — skip newsletters, (5) recommendations for how to spend the day given meetings and Linear. Do not send mail, create events, or mutate Linear. If Google or Linear is not authenticated, say so instead of guessing."
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Apply this Athena checkout onto the local Hermes profile.
 # Safe to re-run. Never prints secret values.
+# Pass --cron on the gateway Mac to install/update jobs from cron/*.example.json.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -8,6 +9,30 @@ HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
 HERMES_PY="${HERMES_HOME}/hermes-agent/venv/bin/python"
 GSETUP="${HERMES_HOME}/skills/productivity/google-workspace/scripts/setup.py"
 MCP_JSON="${ROOT}/mcp.json"
+MARKER="${HERMES_HOME}/athena.cron-machine"
+WANT_CRON=0
+
+for arg in "$@"; do
+  case "${arg}" in
+    --cron) WANT_CRON=1 ;;
+    -h|--help)
+      cat <<EOF
+Usage: $0 [--cron]
+
+Apply this checkout onto the local Hermes profile (cwd, skill trust, Linear, Google client).
+
+  --cron   also create/update scheduled jobs from cron/*.example.json
+           (gateway Mac only; after the first success, later bootstraps keep them in sync)
+EOF
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: ${arg}" >&2
+      echo "Usage: $0 [--cron]" >&2
+      exit 1
+      ;;
+  esac
+done
 
 need() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -107,6 +132,16 @@ else
 fi
 
 echo
+echo "== cron routines =="
+if [[ "${WANT_CRON}" -eq 1 || -f "${MARKER}" ]]; then
+  "${ROOT}/scripts/sync-cron.sh"
+else
+  echo "not installing jobs (this would duplicate them on a second laptop)."
+  echo "On the one always-on gateway Mac:  ./scripts/bootstrap.sh --cron"
+  echo "Or just:  ./scripts/sync-cron.sh"
+fi
+
+echo
 echo "Next: start a new Hermes session from this repo (or rely on terminal.cwd)."
-echo "Cron jobs fire only while the gateway is running, on one machine: hermes gateway"
+echo "Cron jobs fire only while the gateway is running: hermes gateway"
 echo "See SETUP.md"
