@@ -1,7 +1,7 @@
 ---
 name: morning-brief
 description: Morning brief from Linear, Calendar, and Gmail.
-version: 0.1.0
+version: 0.2.0
 ---
 
 # Morning brief
@@ -34,6 +34,15 @@ Cap "do today" at **5** issues. Everything else is context, not a task list. Ran
 If Linear tools are missing, say so and continue with Google. Do not invent issues.
 
 ### 3. Fetch calendar and mail
+
+Invoke `google-workspace`'s `scripts/google_api.py` with the **Hermes venv interpreter** — it is the only Python on this machine carrying the Google client libraries:
+
+```bash
+~/.hermes/hermes-agent/venv/bin/python \
+  ~/.hermes/skills/productivity/google-workspace/scripts/google_api.py <subcommand>
+```
+
+Bare `python` does not exist here, and system `python3` fails with `ModuleNotFoundError: No module named 'googleapiclient'`. Do **not** try to `pip install` the dependencies to work around it: the system environment is externally managed and the install will fail. Subcommand args are positional — `gmail search "<query>" --max N`, `calendar list --start <iso> --end <iso>`.
 
 Follow `google-workspace` `references/daily-brief.md`: all calendars in the day window (conflicts, prep, locations/links), then only mail that changes priority or follow-up. Skip newsletters. If Google is not authenticated, say so.
 
