@@ -189,6 +189,21 @@ def run_hermes(args):
         raise SystemExit(result.returncode)
 
 
+def verify(spec, expect):
+    """`hermes cron create`/`edit` can exit 0 after printing a failure, so
+    confirm the live job really matches the template before counting it."""
+    if dry_run:
+        return True
+    job = find_existing(load_live(), spec["name"])
+    if job is None:
+        print(f"  FAILED ({expect}): no live job named {spec['name']!r}", file=sys.stderr)
+        return False
+    if needs_update(job, spec):
+        print(f"  FAILED ({expect}): live job {spec['name']!r} still differs from template", file=sys.stderr)
+        return False
+    return True
+
+
 live = load_live()
 errors = 0
 created = 0
@@ -221,8 +236,11 @@ for path in examples:
         for skill in spec["skills"]:
             args.extend(["--skill", skill])
         run_hermes(args)
-        created += 1
-        print("  created")
+        if verify(spec, "create"):
+            created += 1
+            print("  created")
+        else:
+            errors += 1
         continue
 
     if not needs_update(existing, spec):
@@ -249,8 +267,11 @@ for path in examples:
     else:
         args.append("--clear-skills")
     run_hermes(args)
-    updated += 1
-    print("  updated")
+    if verify(spec, "edit"):
+        updated += 1
+        print("  updated")
+    else:
+        errors += 1
 
 print()
 print(f"created={created}  updated={updated}  unchanged={unchanged}  errors={errors}")

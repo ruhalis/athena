@@ -1,6 +1,6 @@
 {
   "name": "morning-brief",
-  "schedule": "every 1d at 08:00",
+  "schedule": "0 8 * * *",
   "deliver": "telegram",
   "workdir": "repo",
   "skills": ["google-workspace", "morning-brief"],
