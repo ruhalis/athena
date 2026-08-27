@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Athena — personal assistant</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { max-width: 42rem; margin: 4rem auto; padding: 0 1.25rem;
+         font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  h1 { font-size: 1.75rem; margin-bottom: .25rem; }
+  .sub { opacity: .7; margin-top: 0; }
+  h2 { font-size: 1.1rem; margin-top: 2.25rem; }
+  ul { padding-left: 1.2rem; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid rgba(128,128,128,.3);
+           font-size: .9rem; opacity: .75; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+  <h1>Athena</h1>
+  <p class="sub">A personal, text-only assistant run by a single individual for their own use.</p>
+
+  <h2>What it does</h2>
+  <p>Athena is a private assistant built on the open-source
+     <a href="https://github.com/NousResearch/hermes-agent">Hermes Agent</a> runtime. It runs on its
+     owner's own computer and is used by one person: its owner. It is not a product, not a service,
+     and has no other users.</p>
+
+  <p>Its main job is a morning brief — a short start-of-day summary assembled from the owner's own
+     calendar, mail, and issue tracker, delivered to the owner's private messaging channel.</p>
+
+  <h2>Google account access</h2>
+  <p>Athena connects to its owner's own Google account through Google OAuth to read:</p>
+  <ul>
+    <li>Google Calendar — today's events, to report the day's schedule</li>
+    <li>Gmail — recent messages, to flag anything that changes the day's priorities</li>
+  </ul>
+  <p>It reads this data on the owner's behalf, on the owner's machine. See the
+     <a href="privacy.html">privacy policy</a> for how that data is handled.</p>
+
+  <h2>Source</h2>
+  <p>The configuration for this assistant is public at
+     <a href="https://github.com/ruhalis/athena">github.com/ruhalis/athena</a>.</p>
+
+  <footer>
+    <a href="privacy.html">Privacy policy</a>
+  </footer>
+</body>
+</html>

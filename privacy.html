@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy — Athena</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { max-width: 42rem; margin: 4rem auto; padding: 0 1.25rem;
+         font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; }
+  h1 { font-size: 1.75rem; margin-bottom: .25rem; }
+  .sub { opacity: .7; margin-top: 0; }
+  h2 { font-size: 1.1rem; margin-top: 2.25rem; }
+  ul { padding-left: 1.2rem; }
+  code { font-size: .9em; }
+  footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid rgba(128,128,128,.3);
+           font-size: .9rem; opacity: .75; }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+  <h1>Privacy policy</h1>
+  <p class="sub">Athena — last updated 27 August 2026</p>
+
+  <h2>Who this covers</h2>
+  <p>Athena is a personal assistant operated by one individual for their own use. It has a single
+     user, who is also its operator and the owner of every Google account it connects to. It does not
+     serve, onboard, or collect data about anyone else.</p>
+
+  <h2>What Google data is accessed</h2>
+  <ul>
+    <li><strong>Google Calendar</strong> — events in the current day, to summarise the schedule.</li>
+    <li><strong>Gmail</strong> — recent message metadata and content, to flag messages that change
+        the day's priorities.</li>
+  </ul>
+  <p>Access is granted by the account owner through Google OAuth and can be withdrawn at any time.</p>
+
+  <h2>How it is used</h2>
+  <p>The data is used for exactly one purpose: producing a start-of-day summary for the account owner.
+     It is not used for advertising, profiling, analytics, training machine-learning models, or any
+     purpose beyond that summary.</p>
+
+  <h2>Where it goes</h2>
+  <ul>
+    <li><strong>The owner's own computer.</strong> The assistant runs locally. OAuth tokens and session
+        history are stored on that machine, in the owner's home directory, and are not uploaded anywhere.</li>
+    <li><strong>A language model provider.</strong> To write the summary, the relevant calendar entries
+        and message excerpts are sent to a third-party language model API (currently OpenAI) over an
+        encrypted connection, and are subject to that provider's data handling terms.</li>
+    <li><strong>The owner's private messaging channel.</strong> The finished summary is delivered to a
+        messaging account belonging to the owner.</li>
+  </ul>
+  <p>Data is never sold, rented, published, or shared with any other party.</p>
+
+  <h2>Retention</h2>
+  <p>Google data is fetched at the moment a summary is produced and is not stored in any database.
+     Local session logs may retain the text of a summary until the owner deletes them. Deleting the
+     local Hermes directory removes all stored tokens and history.</p>
+
+  <h2>Limited use</h2>
+  <p>Athena's use and transfer of information received from Google APIs adheres to the
+     <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services
+     User Data Policy</a>, including the Limited Use requirements.</p>
+
+  <h2>Revoking access</h2>
+  <p>The account owner can revoke Athena's access at any time at
+     <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>, which
+     immediately and permanently ends all data access.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about this policy: <a href="mailto:arlan.baikurazov@gmail.com">arlan.baikurazov@gmail.com</a></p>
+
+  <footer>
+    <a href="index.html">Back to Athena</a>
+  </footer>
+</body>
+</html>
