@@ -11,6 +11,8 @@ cd /path/to/athena
 
 The script sets `terminal.cwd` and project-skill trust to this checkout, ensures Linear is declared in Hermes config, and prints what still needs a browser login. On the **one always-on gateway Mac**, pass `--cron` so routines in `cron/*.example.json` are created or updated.
 
+If a gateway is already running with an older `terminal.cwd`, bootstrap restarts it. A gateway reads that value once, at startup, and `terminal.cwd` is what makes this repo's project skills resolvable — so a stale gateway makes cron runs silently skip them (`⚠️ Skill(s) not found and skipped: morning-brief`). If you ever change `terminal.cwd` by hand, run `hermes gateway restart` yourself.
+
 ## What lives where
 
 | Thing | Git (this repo) | Each machine |
