@@ -58,7 +58,7 @@ Editing a cron prompt is a two-part change: commit the template **and** re-run `
 - **Obsidian** — bundled upstream skill. Vault path comes from `OBSIDIAN_VAULT_PATH` in `~/.hermes/.env`; instructions require resolving it to an absolute path before calling file tools (never pass the `$VAR` through).
 - **Linear** — remote MCP server (`https://mcp.linear.app/mcp`, OAuth). Declared in `mcp.json` (source of truth in git); the token lives in `~/.hermes/mcp-tokens/linear.json`. Not a skill — it is MCP tools.
 - **Gmail / Calendar** — bundled upstream `google-workspace` skill. Desktop OAuth client JSON sits at `google_client_secret.json` in the repo root (gitignored); bootstrap installs it via the skill's `scripts/setup.py`. The user token (`~/.hermes/google_token.json`) needs one browser pass per machine.
-- **`morning-brief`** (`.hermes/skills/morning-brief/`) — the only project-owned skill. Composes Linear MCP + the `google-workspace` `daily-brief` reference. It is explicitly read-only: a brief request never authorizes sending mail, creating events, or mutating Linear.
+- **`morning-brief`** (`.hermes/skills/morning-brief/`) — the only project-owned skill. Composes Linear MCP + the `google-workspace` `daily-brief` reference into a time-blocked plan (PLAN / TO DO / HEADS-UP). Near-read-only: a brief never sends mail and never mutates Linear. Its one write is Google Calendar, and only after the user explicitly agrees to the closing offer — it creates events tagged `[athena-plan]` in the description and may delete **only** events carrying that marker.
 
 ## Conventions when editing
 

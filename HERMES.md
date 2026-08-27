@@ -32,7 +32,7 @@ Connected via the bundled `google-workspace` skill. The Desktop OAuth client JSO
 
 If Google tools fail with `NOT_AUTHENTICATED`, the client JSON is missing or the user still needs one browser OAuth pass. See `SETUP.md`.
 
-When the user asks for a morning brief, meeting prep, or "what's on my plate today," load the project `morning-brief` skill. That skill uses Linear MCP plus the `google-workspace` `daily-brief` reference (Gmail and Calendar).
+When the user asks for a morning brief, meeting prep, or "what's on my plate today," load the project `morning-brief` skill. That skill uses Linear MCP plus the `google-workspace` `daily-brief` reference (Gmail and Calendar). It outputs a time-blocked plan and closes by offering to write that plan to Google Calendar. Load the skill again when the user answers that offer — writing the plan is its rules, not improvisation, and only events tagged `[athena-plan]` may ever be deleted.
 
 ### Cron
 
