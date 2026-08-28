@@ -123,25 +123,48 @@ Every plan block, TO DO line, and heads-up must trace to a real issue, event, or
 
 ## Writing the plan to Google Calendar
 
-The brief **offers**; the user **decides**. Producing a brief is never authorization to write. Only act on an explicit go-ahead in the conversation — «да», "ok", "put it on the calendar". Silence, a follow-up question, or a thumbs-up on something else is not consent.
+Athena writes **only** to a dedicated calendar, never to the user's primary calendar. Its id lives in
+`~/.hermes/.env` as `ATHENA_CALENDAR_ID`. Read the variable and pass its **resolved value** to `--calendar`;
+never pass the literal `$ATHENA_CALENDAR_ID` through to a tool. If the variable is unset, say so and write
+nothing — do not fall back to the primary calendar.
 
-When the user agrees:
+### Consent
 
-1. **Re-list the day** (`calendar list --start <iso> --end <iso>`) so you are working against current state, not the state you fetched earlier.
-2. **Delete only Athena's own blocks.** An event is Athena's if and only if its description contains the exact marker `[athena-plan]`. Delete those inside today's window with `calendar delete <event_id>`, then create the new set. **Never delete or modify an event without that marker** — those are the user's real commitments, and a deletion here is not recoverable through this tooling.
-3. **Create one event per work block** — never for the `🔒` fixed events, which already exist:
+The brief **offers**; the user **decides**. Producing a brief is never authorization to write, and neither is
+a general "yes, this feature is good."
+
+Write only after the user has seen this specific plan and approved this specific plan — «да», "ok", "put it
+on the calendar" — in the conversation. The user often replies with **edits** ("move the clinic to the
+evening", "drop RUH-52"). Apply the edits, show the corrected plan, and write only when they approve the
+corrected version. An answer that changes the plan is a revision, not a green light.
+
+Never write pre-emptively, never write "to save a step", and never write on a schedule.
+
+### Writing
+
+1. **Re-list the Athena calendar** for the day (`calendar list --start <iso> --end <iso> --calendar <id>`) so
+   you are working against current state, not what you fetched earlier.
+2. **Delete the day's existing Athena blocks** with `calendar delete <event_id> --calendar <id>`. Scope is the
+   dedicated calendar and today's window — nothing else is ever a delete candidate. The `google_api.py`
+   calendar CLI has create/delete/list but no update, so re-planning is delete-then-create.
+3. **Create one event per work block** — never for the `🔒` fixed events, which live on the user's own
+   calendars and already exist:
    ```bash
    ~/.hermes/hermes-agent/venv/bin/python \
      ~/.hermes/skills/productivity/google-workspace/scripts/google_api.py \
-     calendar create --summary "RUH-54 teleportation fix" \
+     calendar create --calendar "<ATHENA_CALENDAR_ID>" \
+     --summary "RUH-54 teleportation fix" \
      --start "2026-08-27T09:00:00+05:00" --end "2026-08-27T11:00:00+05:00" \
      --description "[athena-plan] RUH-54 — закончить валидацию"
    ```
    - Summary: issue identifier + short label, matching the plan line.
    - Times: ISO 8601 **with the +05:00 offset**, never naive.
-   - Description: `[athena-plan]` first, then the block's action. The marker is what makes tomorrow's rewrite safe.
-4. **Report the result in one line** — how many blocks were written, and any that failed. Not a table, not a restatement of the plan.
+   - Description: `[athena-plan]` first, then the block's action. Keep the marker even on the dedicated
+     calendar — it is a second line of defence, not the primary one.
+4. **Report in one line** — how many blocks were written, and any that failed. Not a table, not a restatement
+   of the plan.
 
-Re-running on the same day replaces Athena's blocks and leaves everything else untouched. If the user asks to clear the plan, delete the marked events and create nothing.
+If the user asks to clear the plan, delete the day's events on the Athena calendar and create nothing.
 
-This section is the **only** write Athena performs from a brief. A brief still never sends mail, never mutates Linear, and never touches a calendar event it did not create.
+This is the **only** write Athena performs from a brief. A brief never sends mail, never mutates Linear, and
+never creates, edits, or deletes an event on any calendar other than the dedicated Athena one.
