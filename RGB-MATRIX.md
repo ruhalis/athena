@@ -2,7 +2,7 @@
 
 Waveshare **RGB-Matrix-P3 64×64** (HUB75E) driven by an **ESP32-S3-DevKitC-1** over a **USB cable** from the Mac. The Mac writes one JSON line per state change to the board's serial port; the board renders. No Wi-Fi, no WebSocket, no credentials: plug in two cables and it works. Wi-Fi is a later step (see the end of this file).
 
-Status: manual for a board that does not exist yet. `firmware/athena_matrix/` is empty; the driver submodule is declared in `.gitmodules` but not checked out. Build it against this document.
+Status: design for the S3 build. `firmware/athena_matrix/` currently holds an **ESP32-WROOM-32 prototype** with its own bit-banged `hub75` component and a different pin map (see `firmware/athena_matrix/README.md`); the driver submodule is declared in `.gitmodules` but not checked out. The serial protocol below is not implemented yet.
 
 ## Architecture
 

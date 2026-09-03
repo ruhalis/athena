@@ -1,0 +1,12 @@
+# ESP32-WROOM-32 (classic ESP32, 4 MB flash, no PSRAM)
+CONFIG_IDF_TARGET="esp32"
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+
+# The panel is refreshed by a tight GPIO loop; -O2 keeps its pixel clock high.
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+CONFIG_FREERTOS_HZ=1000
+
+# The hub75 refresh task owns core 1 and never blocks, so the idle task on that
+# core never runs. Do not let the task watchdog treat that as a hang.
+CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
