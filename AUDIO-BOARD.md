@@ -59,15 +59,52 @@ PWM both couple into MEMS mics as hiss.
 
 ## Firmware (ESP-IDF 5.x, C)
 
-Toolchain: ESP-IDF 5.x directly, or the pioarduino PlatformIO fork. Stock
-PlatformIO still ships Arduino 2 for the S3, which cannot build ESP-SR.
-Add the SDK with `idf.py add-dependency "espressif/esp-sr"`. The
-`esp-skainet` wake-word example is the reference for AFE + WakeNet; only the
-I2S reader is board-specific and is yours.
+Toolchain: **pure ESP-IDF** at the tag pinned by the global Claude Code
+`esp-idf` skill (`~/.claude/skills/esp-idf/idf-version`), the same as the
+matrix board. No Arduino core and no PlatformIO: the Arduino core PlatformIO
+ships for the S3 cannot build ESP-SR. Build, flash, and monitor rules are
+that skill; Mac setup is `setup-macos.md` next to it; Athena-specific layout
+is in `CLAUDE.md`. The project lives at
+`firmware/athena_audio/`. Add the SDK with
+`idf.py add-dependency "espressif/esp-sr"` (registry component, IDF ≥ 5.0).
+The `esp-skainet` wake-word example is the reference for AFE + WakeNet; only
+the I2S reader is board-specific and is yours.
 
 sdkconfig essentials: octal PSRAM at 80 MHz, CPU 240 MHz, a custom partition
 table with a `model` partition for ESP-SR, WakeNet model `wn9_hiesp` for
 the first phrase.
+
+`sdkconfig.defaults` starter, lifted from esp-skainet's
+`wake_word_detection/afe` example with the wake word swapped:
+
+```
+CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_SR_WN_WN9_HIESP=y
+CONFIG_SR_VADN_VADNET1_MEDIUM=y
+```
+
+`partitions.csv`: the `model` partition is where esp-sr stores its models,
+and `idf.py flash` writes it together with the app. NVS and PHY partitions
+are there because Wi-Fi needs them; the esp-skainet example has neither.
+
+```
+# Name,     Type, SubType, Offset,  Size
+nvs,        data, nvs,     0x9000,  24K
+phy_init,   data, phy,     0xf000,  4K
+factory,    app,  factory, 0x10000, 3M
+model,      data, spiffs,  ,        6M
+```
 
 AFE setup: `afe_config_init("MMR", models, AFE_TYPE_SR, AFE_MODE_LOW_COST)`
 with AEC, NS, VAD, and WakeNet enabled. ESP-SR's AEC supports at most two

@@ -209,3 +209,16 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
+
+# ESP-IDF (firmware/) — generated or secret. build/ is covered above.
+sdkconfig
+sdkconfig.old
+managed_components/
+athena_secrets.h
+secrets.h
+# The Python template above ignores every lib/; firmware trees may legitimately have one.
+!firmware/**/lib/
+
+# Claude Code per-machine files (board ports live in CLAUDE.local.md)
+.claude/settings.local.json
+CLAUDE.local.md

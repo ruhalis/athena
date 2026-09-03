@@ -27,6 +27,7 @@ If a gateway is already running with an older `terminal.cwd`, bootstrap restarts
 | Cron *definitions* | `cron/*.example.json` | Live jobs in `~/.hermes/cron/jobs.json` |
 | Personality | optional copy of `~/.hermes/SOUL.md` | `~/.hermes/SOUL.md` (not loaded from the repo) |
 | Sessions / memory | never | `~/.hermes/sessions/`, `memories/` |
+| Firmware toolchain (optional) | never — the global Claude Code `esp-idf` skill lives in `~/.claude/skills/esp-idf/`; Hermes does not load it | `~/esp/esp-idf`; recipe in `~/.claude/skills/esp-idf/setup-macos.md` |
 
 ## New machine checklist
 
