@@ -1,8 +1,9 @@
 # Audio Board for Athena (pure-parts build)
 
 Companion to `RGB-MATRIX.md`. The matrix board is Athena's face; this board is
-its ears and mouth. Both are ESP32-S3 boards in one enclosure, both dial the
-Mac hub (`athena.py`) over WebSocket. The Mac does STT, the Hermes turn, and
+its ears and mouth. Both are ESP32-S3 boards in one enclosure. This one dials the
+Mac hub (`athena.py`) over WebSocket; the matrix is wired over USB serial for
+now. The Mac does STT, the Hermes turn, and
 TTS; this board does wake word, echo cancellation, capture, and playback.
 
 Status: design note. Nothing in `firmware/athena_audio/` exists yet.
