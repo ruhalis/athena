@@ -85,5 +85,17 @@ The global `esp-idf` skill owns the workflow; board facts, pin maps, and `sdkcon
 - Transport differs per board. The matrix is driven over **USB serial** for now (one JSON line per state change on UART0, replies `ok`/`err`; no Wi-Fi, no secrets header) with WebSocket deferred, not dropped. The audio board dials the hub over WebSocket. Registry dependencies: `espressif/esp-sr` (audio only), `espressif/esp_websocket_client`, `espressif/mdns`.
 - On the S3 the HUB75 driver is `ESP32-HUB75-MatrixPanel-I2S-DMA` as a git submodule at the path above (its CMake expects that directory name), GFX off, behind one `.cpp` wrapper with `extern "C"` functions. The in-tree `hub75` component (plain GPIO writes, BCM, every pin in GPIO 0..31, refresh task owns core 1) exists because the classic ESP32 has no LCD_CAM; it also runs on the S3 with the same pin map as the DMA driver will use, which is how the S3 board is driven until the submodule is wired in. Everything else is C.
 - Secrets: `firmware/components/athena_common/include/athena_secrets.h`, gitignored, one file for both boards, copied from a committed `.example`.
-- Board ports are recorded in the gitignored `CLAUDE.local.md` as `matrix:` and `audio:` lines under `## Boards`; the skill reads them from there.
+- Board ports are the `## Boards` section at the end of this file, one `<board>: /dev/cu.…` line each (`matrix`, `matrix-wroom`, later `audio`); the `esp-idf` skill reads that section. There is no `CLAUDE.local.md` in this repo any more, it was merged here.
+- Waveshare's wiring figures mislead in two ways. They number the ribbon 16 down to 1 (R1 is wire 16, the last GND is wire 1) where `RGB-MATRIX.md` and the matrix `README.md` use HUB75 numbering 1 to 16 (R1 is pin 1): same layout, their wire N is pin 17 − N here, so wire by signal name. And their ESP32-S3 GPIO diagram is the DMA library's default map plus E on GPIO9, not ours; on the WROOM its GPIOs 6, 7 and 8 are the flash. The only wiring sources are `main/board_pins.h` and the tables in `RGB-MATRIX.md` (S3) and `firmware/athena_matrix/README.md` (WROOM).
 - `.gitignore` already covers `sdkconfig`, `sdkconfig.old`, `managed_components/`, `build/`, the secrets header, and re-includes `firmware/**/lib/` (the Python template above it ignores every `lib/`).
+
+## Boards
+
+Ports for the `esp-idf` skill. This section replaces the former gitignored `CLAUDE.local.md`; port names are not secrets. Only one board is normally on USB, so check `ls /dev/cu.usb*` before flashing and match `idf.py set-target` to the board (`set-target` wipes `build/`).
+
+matrix: /dev/cu.usbmodem5C390168231
+matrix-wroom: /dev/cu.usbserial-A5069RR4
+
+- `matrix` is the ESP32-S3-DevKitC-1 (N16R8), target `esp32s3`. The name is its **native USB** connector and follows the Mac USB port it sits in; replace it with the `/dev/cu.usbserial-*` name once the cable is on the UART connector.
+- `matrix-wroom` is the ESP32-WROOM-32 DevKit the prototype was first built on (ESP32-D0WD-V3 rev 3.1, 4 MB flash, 40 MHz crystal), target `esp32`. FTDI bridge with a programmed serial, so the name is stable wherever it is plugged in. Verified 2026-09-04: it was the board on USB, running the `esp32` build of `athena_matrix` from b281ac2 (wiring-test scene, WROOM pin map, 145 Hz refresh).
+- `audio:` gets added when `firmware/athena_audio/` and its board exist.

@@ -43,7 +43,9 @@ Waveshare figure, the 16 positions are:
 Waveshare numbers the ribbon wires 16 → 1 from R1 down to the last GND; the
 usual HUB75 numbering runs 1 → 16 the other way. Both are in the table so you
 can follow either. Colours are for the rainbow ribbon in the Waveshare picture;
-if yours differs, count from the marked wire.
+they repeat between the two halves (blue, green, yellow, orange, red and brown
+each appear twice), so count from the marked edge wire rather than matching a
+colour. If your ribbon differs, count only.
 
 | HUB75 pin | Waveshare wire | Ribbon colour | Signal | ESP32 GPIO | Where on the 38-pin DevKitC |
 |---|---|---|---|---|---|
@@ -73,6 +75,11 @@ count. On the 30-pin DevKit V1 the pins are labelled `D23`, `D22`, … with the
 same GPIO numbers. The map is
 `main/board_pins.h`; change it there if you wire differently. All 14 pins must
 stay in GPIO 0..31.
+
+Waveshare's ESP32-S3 wiring diagram on the panel's ESP-IDF page does not apply
+to this board. It is drawn for the S3 (`RGB-MATRIX.md` covers why it is not our
+S3 map either), and on a classic ESP32 the GPIO 6, 7 and 8 it uses are the SPI
+flash lines: wire the panel there and the chip does not boot.
 
 On the ESP32-S3 the map is different and `board_pins.h` picks it by target:
 `R1=4 G1=5 B1=6 R2=7 G2=15 B2=16 A=17 B=18 C=8 D=9 E=10 CLK=11 LAT=12 OE=13`,

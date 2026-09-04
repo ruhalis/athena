@@ -42,6 +42,8 @@ HUB75E pinout, looking at the IN header with the key notch at the top (pin 1 is 
 | 13 | CLK | 14 | LAT / STB |
 | 15 | OE (output enable, active low) | 16 | GND |
 
+Waveshare's own figures number the ribbon the other way, 16 down to 1 with R1 as wire 16 and the last GND as wire 1: their wire N is pin 17 − N here (their 13 is GND, pin 4 above; pin 13 CLK above is their wire 4). The layout is the same, so wire by signal name. The rainbow ribbon repeats its colours between the two halves; count from the marked edge wire.
+
 A 64×64 panel is 1/32 scan: A–E select one of 32 row pairs and the R/G/B lines carry the top half (rows 0–31) and the bottom half (rows 32–63) at once. **E is not optional.** Without it only the top half addresses correctly; on a 1/16 panel pin 8 is ground.
 
 ## Power
@@ -76,7 +78,7 @@ Every HUB75 signal lands on the DevKit's **J1** header, in header order, so a br
 
 Skipped on purpose: GPIO3 and GPIO46 (strapping, they sit between 8 and 9 on J1), GPIO0 and GPIO45 (strapping), GPIO19/20 (USB), GPIO26–32 (flash), GPIO35–37 (octal PSRAM on N16R8), GPIO43/44 (the UART console that carries the commands). GPIO14 stays free next to the block.
 
-The driver library's ESP32-S3 defaults do not fit a 64×64 panel: they leave E unassigned and put C on strapping pin GPIO3. Always pass this pin map explicitly.
+The driver library's ESP32-S3 defaults do not fit a 64×64 panel: they leave E unassigned and put C on strapping pin GPIO3. Waveshare's ESP32-S3 wiring diagram (the ESP-IDF page for this panel) is exactly those defaults plus E on GPIO9 (A 18, B 8, C 3, D 42, E 9, CLK 41, LAT 40, OE 2). It agrees with the table above only on the six colour lines, and its D, CLK and LAT sit above GPIO31 where the interim `hub75` driver cannot reach. Do not wire from it. Always pass this pin map explicitly.
 
 The panel's input buffers are 5 V parts, and the ESP32 drives 3.3 V. That works over a short ribbon; a long or noisy one shows ghosting or flicker. Shorten first; add a 74HCT245 between the DevKit and the ribbon only if that is not enough.
 
@@ -142,7 +144,7 @@ No speak EQ bars until TTS exists.
 
 ## Using it from the Mac
 
-1. **Connect.** Panel PSU on, then the DevKit's UART connector to the Mac. Find the port with `ls /dev/cu.usbserial-*` (never `/dev/tty.*`). Record it in the gitignored `CLAUDE.local.md` as `matrix: /dev/cu.usbserial-XXXXXXXX` under `## Boards`; the `esp-idf` skill reads it from there.
+1. **Connect.** Panel PSU on, then the DevKit's UART connector to the Mac. Find the port with `ls /dev/cu.usbserial-*` (never `/dev/tty.*`). Record it as `matrix: /dev/cu.usbserial-XXXXXXXX` under `## Boards` in `CLAUDE.md`; the `esp-idf` skill reads it from there.
 2. **Build and flash** from the project directory, following the `esp-idf` skill:
 
    ```bash
