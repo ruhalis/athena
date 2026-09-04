@@ -99,25 +99,88 @@ CFG_WRITTEN="$(config_mtime)"
 hermes config set terminal.cwd "${ROOT}"
 (cd "${ROOT}" && hermes skills trust "${ROOT}")
 
-# terminal.cwd is what makes this repo's project skills (.hermes/skills/)
-# resolvable: Hermes derives the project root from TERMINAL_CWD, and a gateway
-# bridges config -> TERMINAL_CWD exactly once, at startup. A gateway already
-# running when this value changed keeps serving the old one, and cron jobs then
-# silently drop project skills -- the run reports "Skill(s) not found and
-# skipped: morning-brief" and briefs lose the skill's caps and rules. The
-# per-job workdir does not cover this: the scheduler resolves skills while
-# building the prompt, before it applies the job's workdir.
+echo
+echo "== athena-face plugin =="
+# The plugin lives in this checkout, but Hermes scans ./.hermes/plugins
+# relative to the process cwd, and the launchd-supervised gateway always runs
+# with cwd ~/.hermes: upstream pins the plist's WorkingDirectory there and
+# regenerates the plist, so `hermes gateway restart` from this repo does not
+# change it. A symlink in ~/.hermes/plugins/ makes it a *user* plugin, which
+# every Hermes process scans regardless of cwd or HERMES_ENABLE_PROJECT_PLUGINS;
+# discovery dedupes by name, so a session started here still sees one entry.
+FACE_LINK="${HERMES_HOME}/plugins/athena-face"
+FACE_SRC="${ROOT}/.hermes/plugins/athena-face"
+FACE_LINK_CHANGED=0
+mkdir -p "${HERMES_HOME}/plugins"
+if [[ -L "${FACE_LINK}" && "$(readlink "${FACE_LINK}")" == "${FACE_SRC}" ]]; then
+  echo "already linked: ${FACE_LINK} -> ${FACE_SRC}"
+elif [[ -L "${FACE_LINK}" ]]; then
+  echo "re-pointing ${FACE_LINK} (was $(readlink "${FACE_LINK}")) -> ${FACE_SRC}"
+  ln -sfn "${FACE_SRC}" "${FACE_LINK}"
+  FACE_LINK_CHANGED=1
+elif [[ -e "${FACE_LINK}" ]]; then
+  echo "  !! ${FACE_LINK} exists and is not a symlink -- leaving it alone."
+  echo "     Move it away and re-run bootstrap to link this checkout's plugin."
+else
+  echo "linking ${FACE_LINK} -> ${FACE_SRC}"
+  ln -s "${FACE_SRC}" "${FACE_LINK}"
+  FACE_LINK_CHANGED=1
+fi
+# Plugins are also opt-in through plugins.enabled in ~/.hermes/config.yaml.
+# The allow-list is merged here through the same config API the CLI uses, so
+# it works whether or not `hermes plugins enable` can see the plugin.
+if hermes config get plugins.enabled 2>/dev/null | grep -q 'athena-face'; then
+  echo "already enabled: athena-face"
+else
+  echo "enabling plugin: athena-face"
+  HERMES_AGENT_DIR="${HERMES_HOME}/hermes-agent" "${HERMES_HOME}/hermes-agent/venv/bin/python" - <<'PY' \
+    || echo "  could not enable athena-face: add it to plugins.enabled in ${HERMES_HOME}/config.yaml by hand"
+import os, sys
+sys.path.insert(0, os.environ["HERMES_AGENT_DIR"])
+from hermes_cli.config import load_config, save_config
+cfg = load_config()
+plugins = cfg.get("plugins")
+if not isinstance(plugins, dict):
+    plugins = cfg["plugins"] = {}
+enabled = plugins.get("enabled")
+if not isinstance(enabled, list):
+    enabled = []
+if "athena-face" not in enabled:
+    enabled.append("athena-face")
+    plugins["enabled"] = sorted(enabled)
+    save_config(cfg)
+print("  plugins.enabled:", ", ".join(plugins["enabled"]))
+PY
+fi
+
+echo
+echo "== gateway =="
+# A gateway reads two things exactly once, at startup: terminal.cwd (bridged
+# to TERMINAL_CWD, which is what makes this repo's project skills in
+# .hermes/skills/ resolvable for cron runs) and the plugin directories. A
+# gateway already running when either changed keeps serving the old state:
+# cron jobs silently drop project skills -- the run reports "Skill(s) not
+# found and skipped: morning-brief" and briefs lose the skill's caps and rules
+# -- and a freshly linked athena-face never loads. The per-job workdir does
+# not cover the skills case: the scheduler resolves skills while building the
+# prompt, before it applies the job's workdir.
 if gw_pid="$(gateway_pid)"; then
+  reason=""
   if [[ "${PREV_CWD}" != "${ROOT}" ]] || gateway_predates_config "${gw_pid}" "${CFG_WRITTEN}"; then
-    echo "  gateway PID ${gw_pid} predates the current terminal.cwd -- restarting it"
+    reason="predates the current terminal.cwd"
+  elif [[ "${FACE_LINK_CHANGED}" == "1" ]]; then
+    reason="started before athena-face was linked"
+  fi
+  if [[ -n "${reason}" ]]; then
+    echo "  gateway PID ${gw_pid} ${reason} -- restarting it"
     if hermes gateway restart; then
-      echo "  gateway restarted; cron jobs now resolve this repo's skills"
+      echo "  gateway restarted; cron jobs resolve this repo's skills and the face plugin is loaded"
     else
       echo "  !! gateway restart FAILED -- restart it yourself, or cron jobs will keep"
-      echo "     skipping this repo's skills (morning-brief)."
+      echo "     skipping this repo's skills (morning-brief) and the face stays dark on Telegram."
     fi
   else
-    echo "  gateway PID ${gw_pid} already running with terminal.cwd=${ROOT}"
+    echo "  gateway PID ${gw_pid} already running with terminal.cwd=${ROOT} and athena-face linked"
   fi
 else
   echo "  no gateway running here (cron fires only while one is: hermes gateway)"
@@ -152,37 +215,6 @@ else
   hermes mcp install linear
 fi
 echo "source of truth in git: ${MCP_JSON}"
-
-echo
-echo "== athena-face plugin =="
-# Plugins are opt-in through plugins.enabled in ~/.hermes/config.yaml. In
-# Hermes 0.20.4 `hermes plugins enable` only sees bundled and ~/.hermes/plugins
-# entries (the agent loader itself does find project plugins), so the
-# allow-list is merged here through the same config API the CLI uses.
-if hermes config get plugins.enabled 2>/dev/null | grep -q 'athena-face'; then
-  echo "already enabled: athena-face"
-else
-  echo "enabling project plugin: athena-face"
-  HERMES_AGENT_DIR="${HERMES_HOME}/hermes-agent" "${HERMES_HOME}/hermes-agent/venv/bin/python" - <<'PY' \
-    || echo "  could not enable athena-face: add it to plugins.enabled in ${HERMES_HOME}/config.yaml by hand"
-import os, sys
-sys.path.insert(0, os.environ["HERMES_AGENT_DIR"])
-from hermes_cli.config import load_config, save_config
-cfg = load_config()
-plugins = cfg.get("plugins")
-if not isinstance(plugins, dict):
-    plugins = cfg["plugins"] = {}
-enabled = plugins.get("enabled")
-if not isinstance(enabled, list):
-    enabled = []
-if "athena-face" not in enabled:
-    enabled.append("athena-face")
-    plugins["enabled"] = sorted(enabled)
-    save_config(cfg)
-print("  plugins.enabled:", ", ".join(plugins["enabled"]))
-PY
-fi
-echo "project plugins load from the directory Hermes is started in: run hermes chat / hermes gateway from ${ROOT}"
 
 echo
 echo "== env (names only) =="

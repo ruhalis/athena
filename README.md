@@ -30,7 +30,7 @@ That sets `terminal.cwd` and skill trust to this checkout, ensures Linear is dec
 | Personality | `~/.hermes/SOUL.md` | Not loaded from the repo |
 | Instructions | `HERMES.md` | Loaded when cwd is this repo |
 | Skills | `.hermes/skills/` | After `hermes skills trust` |
-| Tools / hooks | `.hermes/plugins/` | Enable with `hermes plugins enable <name>`; bootstrap enables `athena-face` |
+| Tools / hooks | `.hermes/plugins/` | Enable with `hermes plugins enable <name>`; bootstrap enables `athena-face` and links it into `~/.hermes/plugins/` so the gateway loads it |
 | MCP servers | `mcp.json` | Login tokens stay in `~/.hermes/mcp-tokens/` |
 | Cron templates | `cron/*.example.json` | Live jobs via `./scripts/sync-cron.sh` on one gateway machine |
 | Core Hermes | don't fork | Use plugins instead of patching `~/.hermes/hermes-agent` |
