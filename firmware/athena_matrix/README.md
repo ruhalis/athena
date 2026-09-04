@@ -1,11 +1,12 @@
-# athena_matrix — Waveshare RGB-Matrix-P3-64x64 on an ESP32-WROOM-32
+# athena_matrix — Waveshare RGB-Matrix-P3-64x64 on an ESP32-WROOM-32 or ESP32-S3
 
 Pure ESP-IDF firmware for the Waveshare 64×64 P3 HUB75E panel, written from
 scratch: no Arduino, no third-party matrix library. The classic ESP32 has no
 LCD_CAM peripheral, so the panel is refreshed by a tight GPIO loop on core 1
-(binary code modulation, 5 bit planes per colour, roughly 100–150 Hz). The demo
-in `main/main.c` cycles a wiring test, colour bars, a clock face and a bouncing
-ball.
+(binary code modulation, 5 bit planes per colour, roughly 100–150 Hz). The same
+loop also runs on the ESP32-S3-DevKitC-1 as the bring-up path until the DMA
+driver from `RGB-MATRIX.md` is wired in. The demo in `main/main.c` cycles a
+wiring test, colour bars, a clock face and a bouncing ball.
 
 Everything about *how* to build, flash and watch the board lives in the global
 `esp-idf` Claude Code skill. This file holds what is specific to this project:
@@ -17,9 +18,10 @@ the wiring and what the demo should look like.
 |---|---|
 | Waveshare RGB-Matrix-P3-64x64 | HUB75E, 1/32 scan, 5 V, up to 4 A at full white |
 | ESP32-WROOM-32 dev board | 38-pin DevKitC or 30-pin "DevKit V1". Not a WROVER (GPIO16/17 are its PSRAM) |
+| or ESP32-S3-DevKitC-1 (N16R8) | the board `RGB-MATRIX.md` is designed for; wire it per that file's J1 table, not the WROOM map below |
 | 16-pin ribbon (ships with the panel) plus 15 female-to-male Dupont wires, or a 2×8 IDC breakout | the ribbon goes on the panel's **IN** header |
 | 5 V supply, **4 A or more**, on the panel's 4-pin VH power lead | never power the panel from the ESP32's 5V pin |
-| Micro-USB cable to the dev board | powers the ESP32 and carries the log |
+| Micro-USB cable to the WROOM DevKit, or USB-C to the S3's **UART** connector | powers the board and carries the log |
 
 ## Wiring
 
@@ -72,6 +74,12 @@ same GPIO numbers. The map is
 `main/board_pins.h`; change it there if you wire differently. All 14 pins must
 stay in GPIO 0..31.
 
+On the ESP32-S3 the map is different and `board_pins.h` picks it by target:
+`R1=4 G1=5 B1=6 R2=7 G2=15 B2=16 A=17 B=18 C=8 D=9 E=10 CLK=11 LAT=12 OE=13`,
+the J1 header layout from `RGB-MATRIX.md` (that file has the J1 pin numbers and
+the reasons each other pin was skipped). It is the same map the DMA driver will
+use, so the wiring does not change when the driver does.
+
 **E is not optional.** A 64×64 panel is 1/32 scan; without E only half the rows
 address correctly.
 
@@ -99,7 +107,7 @@ moment; a 10 kΩ pull-up from GPIO4 to 3.3 V keeps it dark during boot.
 ```bash
 . ~/esp/esp-idf/export.sh >/dev/null
 cd firmware/athena_matrix
-idf.py set-target esp32              # first time only
+idf.py set-target esp32              # first time only; esp32s3 for the S3 DevKitC-1
 idf.py build
 idf.py -p /dev/cu.usbserial-XXXXXXXX flash
 idf.py -p /dev/cu.usbserial-XXXXXXXX monitor    # leave with Ctrl+]
@@ -109,7 +117,7 @@ Boot log to expect:
 
 ```
 I (xxx) hub75: 64x64 1/32 scan, 5 bit planes, brightness 40, refresh on core 1
-I (xxx) hub75: R1=23 G1=22 B1=21 R2=19 G2=18 B2=5 A=25 B=26 C=27 D=14 E=13 CLK=17 LAT=16 OE=4
+I (xxx) hub75: R1=23 G1=22 B1=21 R2=19 G2=18 B2=5 A=25 B=26 C=27 D=14 E=13 CLK=17 LAT=16 OE=4   (the S3 map on an S3)
 I (xxx) athena_matrix: scene: wiring test
 I (xxx) athena_matrix: panel refresh 1xx Hz, free heap ...
 ```
@@ -153,5 +161,7 @@ I (xxx) athena_matrix: panel refresh 1xx Hz, free heap ...
   colour depth.
 - The refresh task never blocks, so `sdkconfig.defaults` turns off the idle-task
   watchdog check for core 1.
-- Moving to the ESP32-S3 later needs `idf.py set-target esp32s3` and a pin map
-  with every pin below 32; the driver itself is unchanged.
+- The ESP32-S3 build uses the driver unchanged with a pin map that keeps every
+  pin below 32; `sdkconfig.defaults.esp32s3` adds the 16 MB flash and octal
+  PSRAM keys. The DMA driver in `RGB-MATRIX.md` is still the plan for the S3;
+  this is the bring-up path.

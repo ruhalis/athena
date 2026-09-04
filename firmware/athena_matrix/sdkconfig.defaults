@@ -1,6 +1,6 @@
-# ESP32-WROOM-32 (classic ESP32, 4 MB flash, no PSRAM)
-CONFIG_IDF_TARGET="esp32"
-CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+# Keys shared by every target. Chip-specific keys (flash size, PSRAM) live in
+# sdkconfig.defaults.<target>, which ESP-IDF layers on top of this file after
+# `idf.py set-target <chip>`.
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 
 # The panel is refreshed by a tight GPIO loop; -O2 keeps its pixel clock high.
