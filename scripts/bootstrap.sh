@@ -154,6 +154,37 @@ fi
 echo "source of truth in git: ${MCP_JSON}"
 
 echo
+echo "== athena-face plugin =="
+# Plugins are opt-in through plugins.enabled in ~/.hermes/config.yaml. In
+# Hermes 0.20.4 `hermes plugins enable` only sees bundled and ~/.hermes/plugins
+# entries (the agent loader itself does find project plugins), so the
+# allow-list is merged here through the same config API the CLI uses.
+if hermes config get plugins.enabled 2>/dev/null | grep -q 'athena-face'; then
+  echo "already enabled: athena-face"
+else
+  echo "enabling project plugin: athena-face"
+  HERMES_AGENT_DIR="${HERMES_HOME}/hermes-agent" "${HERMES_HOME}/hermes-agent/venv/bin/python" - <<'PY' \
+    || echo "  could not enable athena-face: add it to plugins.enabled in ${HERMES_HOME}/config.yaml by hand"
+import os, sys
+sys.path.insert(0, os.environ["HERMES_AGENT_DIR"])
+from hermes_cli.config import load_config, save_config
+cfg = load_config()
+plugins = cfg.get("plugins")
+if not isinstance(plugins, dict):
+    plugins = cfg["plugins"] = {}
+enabled = plugins.get("enabled")
+if not isinstance(enabled, list):
+    enabled = []
+if "athena-face" not in enabled:
+    enabled.append("athena-face")
+    plugins["enabled"] = sorted(enabled)
+    save_config(cfg)
+print("  plugins.enabled:", ", ".join(plugins["enabled"]))
+PY
+fi
+echo "project plugins load from the directory Hermes is started in: run hermes chat / hermes gateway from ${ROOT}"
+
+echo
 echo "== env (names only) =="
 ENV_FILE="${HERMES_HOME}/.env"
 check_env() {

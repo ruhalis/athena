@@ -1,0 +1,15 @@
+name: athena-face
+version: 0.1.0
+description: "Mirror the agent's lifecycle on the Athena LED face over USB serial (scripts/face.py protocol)."
+author: athena
+hooks:
+  - pre_gateway_dispatch
+  - pre_llm_call
+  - pre_api_request
+  - pre_tool_call
+  - post_tool_call
+  - api_request_error
+  - post_llm_call
+  - pre_approval_request
+  - post_approval_response
+  - on_session_end

@@ -5,12 +5,15 @@ scratch: no Arduino, no third-party matrix library. The classic ESP32 has no
 LCD_CAM peripheral, so the panel is refreshed by a tight GPIO loop on core 1
 (binary code modulation, 5 bit planes per colour, roughly 100–150 Hz). The same
 loop also runs on the ESP32-S3-DevKitC-1 as the bring-up path until the DMA
-driver from `RGB-MATRIX.md` is wired in. The demo in `main/main.c` cycles a
-wiring test, colour bars, a clock face and a bouncing ball.
+driver from `RGB-MATRIX.md` is wired in. `main/` is the Athena face: `serial.c`
+reads one JSON line per state from UART0 (the USB bridge), `face.c` draws the
+current state at 40 fps, `protocol.h` names the states and their fallback
+times. The protocol is in `RGB-MATRIX.md`; the Mac side is `scripts/face.py`
+and the `athena-face` Hermes plugin.
 
 Everything about *how* to build, flash and watch the board lives in the global
 `esp-idf` Claude Code skill. This file holds what is specific to this project:
-the wiring and what the demo should look like.
+the wiring and what the panel should show.
 
 ## What you need
 
@@ -20,7 +23,7 @@ the wiring and what the demo should look like.
 | ESP32-WROOM-32 dev board | 38-pin DevKitC or 30-pin "DevKit V1". Not a WROVER (GPIO16/17 are its PSRAM) |
 | or ESP32-S3-DevKitC-1 (N16R8) | the board `RGB-MATRIX.md` is designed for; wire it per that file's J1 table, not the WROOM map below |
 | 16-pin ribbon (ships with the panel) plus 15 female-to-male Dupont wires, or a 2×8 IDC breakout | the ribbon goes on the panel's **IN** header |
-| 5 V supply, **4 A or more**, on the panel's 4-pin VH power lead | never power the panel from the ESP32's 5V pin |
+| 5 V supply, **4 A or more**, on the panel's 4-pin VH power lead | the ESP32's 5V pin can feed it only for a short wiring check at brightness 12, see Power and order |
 | Micro-USB cable to the WROOM DevKit, or USB-C to the S3's **UART** connector | powers the board and carries the log |
 
 ## Wiring
@@ -100,8 +103,17 @@ address correctly.
 4. Then the ESP32's USB.
 5. Never plug or unplug the ribbon with the panel powered.
 
-The demo starts at brightness 40 of 255. Full white at 255 is where the 4 A
-goes; raise it only on a supply that can deliver that.
+The firmware boots at brightness 12 of 255. That is low enough to run the
+wiring check with the panel fed from the DevKit's 5V pin over USB (about
+0.1 A for the test pattern on top of the panel's own logic; the USB port gives
+0.5 A and the DevKit's diode about 1 A, and the ESP32 browns out and reboots
+when the rail sags). Full white at 255 is where the 4 A goes; raise it
+(`scripts/face.py --brightness N`, or `ATHENA_FACE_BRIGHTNESS` for the plugin)
+only on a supply that can deliver that. A tell-tale of the rail sagging on a
+USB-fed panel: after a reset the bridge re-enumerates and the Mac cannot
+configure the port any more (`stty: tcsetattr: Invalid argument`, pyserial and
+`face.py` fail the same way). Unplug the USB cable for a few seconds and plug
+it back; the firmware already on the board is unaffected.
 
 The ESP32 drives 3.3 V into the panel's 5 V logic. That works over a short
 ribbon (under 30 cm). If you see ghosting or flicker, shorten the ribbon first;
@@ -123,20 +135,34 @@ idf.py -p /dev/cu.usbserial-XXXXXXXX monitor    # leave with Ctrl+]
 Boot log to expect:
 
 ```
-I (xxx) hub75: 64x64 1/32 scan, 5 bit planes, brightness 40, refresh on core 1
+I (xxx) hub75: 64x64 1/32 scan, 5 bit planes, brightness 12, refresh on core 1
 I (xxx) hub75: R1=23 G1=22 B1=21 R2=19 G2=18 B2=5 A=25 B=26 C=27 D=14 E=13 CLK=17 LAT=16 OE=4   (the S3 map on an S3)
-I (xxx) athena_matrix: scene: wiring test
-I (xxx) athena_matrix: panel refresh 1xx Hz, free heap ...
+I (xxx) serial: UART0 115200 8N1, lines up to 256 bytes
+I (xxx) athena_matrix: ready: boot mode test, modes: idle listen think work speak alert error sleep test off
 ```
 
-## What the demo shows
+From then on every line you send is answered with `ok` or `err <reason>`, and
+an applied state is logged as `I (xxx) face: mode think ttl 120`. From the
+monitor, type `{"mode":"think"}` and Enter; from the Mac, `scripts/face.py think`.
 
-| Scene | Correct result |
+## What the panel shows
+
+The board boots into the wiring test and stays there until the first command,
+so a fresh panel can be checked with nothing but power and USB.
+
+| State | Correct result |
 |---|---|
-| wiring test | red top-left, green top-right, blue bottom-left, white bottom-right, thin white border |
-| colour bars | white, yellow, cyan, green, magenta, red, blue, black bars; smooth red, green, blue and grey ramps below |
-| clock text | `12:34` in the middle with a blinking colon, `ATHENA` scrolling across the top |
-| bounce | an orange ball bouncing inside a grey frame, no tearing |
+| test (boot) | red top-left, green top-right, blue bottom-left, white bottom-right, thin white border. A swapped colour line shows as the wrong colour in a quadrant; a missing E as a wrong bottom half; a wrong A..D as scrambled rows |
+| idle | two pale cyan eyes that blink every few seconds, the time under them if the Mac sent one |
+| listen | wider eyes, a green bar pulsing under them |
+| think | eyes looking up and right, three violet dots cycling above |
+| work | narrowed eyes, an amber segment sweeping along the bottom |
+| speak | idle eyes plus five bouncing mouth bars |
+| alert | idle eyes plus a blinking amber `!` |
+| error | red X eyes and a red border, gone after 10 s |
+| sleep | two dim closed-eye lines |
+
+`scripts/face.py --demo` walks through all of them, 4 s each.
 
 ## Troubleshooting
 

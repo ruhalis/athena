@@ -34,6 +34,10 @@ If Google tools fail with `NOT_AUTHENTICATED`, the client JSON is missing or the
 
 When the user asks for a morning brief, meeting prep, or "what's on my plate today," load the project `morning-brief` skill. That skill uses Linear MCP plus the `google-workspace` `daily-brief` reference (Gmail and Calendar). It outputs a time-blocked plan and closes by offering to write that plan to Google Calendar. Load the skill again when the user answers that offer — writing the plan is its rules, not improvisation. Writes go only to the dedicated calendar in `ATHENA_CALENDAR_ID`, never the primary one, and only after the user approves that specific plan; a reply carrying edits is a revision to show back, not a green light.
 
+### LED face
+
+A small LED matrix on the desk mirrors your state: listen, think, work, speak, alert (waiting for the user), error, sleep. The `athena-face` plugin drives it from your hooks; you do nothing for it in chat. If the user asks why the face shows something, that is the mapping. Never send serial commands to it yourself.
+
 ### Cron
 
 Job *definitions* belong in `cron/*.example.json` in this repo. Live jobs belong on one always-on machine (`~/.hermes/cron/jobs.json`) with the Hermes gateway running. Do not create the same job on two laptops.

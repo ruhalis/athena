@@ -27,6 +27,7 @@ If a gateway is already running with an older `terminal.cwd`, bootstrap restarts
 | Cron *definitions* | `cron/*.example.json` | Live jobs in `~/.hermes/cron/jobs.json` |
 | Personality | optional copy of `~/.hermes/SOUL.md` | `~/.hermes/SOUL.md` (not loaded from the repo) |
 | Sessions / memory | never | `~/.hermes/sessions/`, `memories/` |
+| LED face (optional) | `.hermes/plugins/athena-face/`, `scripts/face.py`, `firmware/athena_matrix/` | `hermes plugins enable athena-face` (bootstrap does it); board port under `## Boards` in `CLAUDE.md`; optional `ATHENA_MATRIX_PORT`, `ATHENA_FACE_BRIGHTNESS`, `ATHENA_FACE_SLEEP` in `~/.hermes/.env` |
 | Firmware toolchain (optional) | never — the global Claude Code `esp-idf` skill lives in `~/.claude/skills/esp-idf/`; Hermes does not load it | `~/esp/esp-idf`; recipe in `~/.claude/skills/esp-idf/setup-macos.md` |
 
 ## New machine checklist
@@ -42,7 +43,8 @@ If a gateway is already running with an older `terminal.cwd`, bootstrap restarts
 5. Run `./scripts/bootstrap.sh`.
 6. Linear: `hermes mcp login linear`, then start a new Hermes session.
 7. Google: if this machine has no `~/.hermes/google_token.json` yet, finish the skill’s `--auth-url` / `--auth-code` flow once.
-8. Point cron at **one always-on machine**. On that Mac: `./scripts/bootstrap.sh --cron` (or `./scripts/sync-cron.sh`). Jobs only fire while the Hermes gateway is running (`hermes gateway`). Do not enable the same jobs on two laptops. After the first `--cron` / `sync-cron.sh` success, later bootstraps on that machine keep jobs in sync.
+8. LED face, if this Mac has the matrix on USB: bootstrap enables the `athena-face` plugin; check it with `scripts/face.py --demo` (the board must run the face firmware, see `RGB-MATRIX.md`). Project plugins load from the directory Hermes is **started in**, so run `hermes chat` and `hermes gateway` from this repo.
+9. Point cron at **one always-on machine**. On that Mac: `./scripts/bootstrap.sh --cron` (or `./scripts/sync-cron.sh`). Jobs only fire while the Hermes gateway is running (`hermes gateway`). Do not enable the same jobs on two laptops. After the first `--cron` / `sync-cron.sh` success, later bootstraps on that machine keep jobs in sync.
 
 Full machine move (same you, new computer): `hermes backup` / `hermes import`, then encrypt the zip. That copies secrets. For a second laptop, use this repo + re-login instead.
 
@@ -53,6 +55,7 @@ In a **new** Hermes session (cwd = this repo):
 - Obsidian: “search the vault for X”
 - Linear: “list my Linear issues”
 - Gmail / Calendar: “what’s on my calendar tomorrow?” / “any unread mail I should see?”
+- LED face (if attached): the panel should show `think` while the answer is generated and `speak` when it lands; `ATHENA_FACE_DRY_RUN=1 hermes chat` prints the same lines to stderr without a board
 
 ## Adding a routine later
 

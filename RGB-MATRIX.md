@@ -2,12 +2,12 @@
 
 Waveshare **RGB-Matrix-P3 64×64** (HUB75E) driven by an **ESP32-S3-DevKitC-1** over a **USB cable** from the Mac. The Mac writes one JSON line per state change to the board's serial port; the board renders. No Wi-Fi, no WebSocket, no credentials: plug in two cables and it works. Wi-Fi is a later step (see the end of this file).
 
-Status: design for the S3 build. `firmware/athena_matrix/` currently holds a **bit-banged prototype** with its own `hub75` component; it builds for the WROOM-32 with its own pin map and for the ESP32-S3 with the pin map below (see `firmware/athena_matrix/README.md`). The driver submodule is declared in `.gitmodules` but not checked out. The serial protocol below is not implemented yet.
+Status: design for the S3 build. `firmware/athena_matrix/` currently holds a **bit-banged prototype** with its own `hub75` component; it builds for the WROOM-32 with its own pin map and for the ESP32-S3 with the pin map below (see `firmware/athena_matrix/README.md`). The driver submodule is declared in `.gitmodules` but not checked out. The serial protocol below is implemented in that prototype (`main/serial.c`, `main/face.c`, `main/protocol.h`) and runs on both targets.
 
 ## Architecture
 
 ```
-athena.py  →  USB (UART bridge, 115200, one JSON per line)  →  ESP32-S3  →  16-pin HUB75E ribbon  →  panel
+athena-face plugin / scripts/face.py  →  USB (UART bridge, 115200, one JSON per line)  →  ESP32  →  16-pin HUB75E ribbon  →  panel
                                                                                   5 V / 4 A PSU     →  panel
 ```
 
@@ -107,7 +107,7 @@ Drawing without GFX: `drawPixelRGB888(x, y, r, g, b)`, `fillRect(x, y, w, h, r, 
 
 Serial input: the DevKit's UART connector is a CP2102N bridge on **UART0** (GPIO43/44), the same UART the log console uses, so no extra pins. Install the UART driver on UART0 at 115200 8N1, read it line by line, parse each line with the bundled `cJSON`. Log lines and command replies share the port; that is fine, the Mac side filters.
 
-Tasks: `serial` on core 0 (reads lines, validates, posts a mode struct); `render` on core 1 (fixed frame rate, draws the current mode into the DMA buffer, applies brightness). One queue between them, nothing else shared.
+Tasks: `serial` (reads lines, validates, posts a command struct) and `render` (40 fps, draws the current mode, applies brightness and the ttl fallback). One queue between them, nothing else shared. With the DMA driver `render` can sit on core 1; with the interim bit-banged driver both stay on core 0 because its refresh loop owns core 1 and never blocks.
 
 `sdkconfig.defaults` starter:
 
@@ -123,24 +123,38 @@ CONFIG_ESP32_HUB75_USE_GFX=n
 
 ## Protocol
 
-One JSON object per line, terminated by LF (a CR before it is ignored), at most 256 bytes. Unknown keys are ignored; an unknown mode is rejected and the display keeps its current state.
+One JSON object per line, terminated by LF (a CR before it is ignored), at most 256 bytes. The board answers every line with exactly `ok` or `err <reason>` on the same port, interleaved with its normal log output; the Mac side skips any line that is neither. Unknown keys are ignored; `{}` is a ping and answers `ok`. An unknown mode answers `err bad mode` and the display keeps its state; malformed JSON answers `err bad json`; an over-long line is dropped with `err too long`.
 
-| Line | Effect |
-|---|---|
-| `{"mode":"clock","t":"14:32"}` | IDLE: shows the time string as sent; the board has no clock of its own |
-| `{"mode":"think"}` | PROCESSING: think bar animation |
-| `{"mode":"test"}` | wiring check: red top-left quadrant, green top-right, blue bottom-left, white bottom-right, one-pixel white border |
-| `{"mode":"off"}` | blank, output disabled |
-| `{"brightness":40}` | 0–255, applies immediately, persists across modes |
+| Key | Type | Effect |
+|---|---|---|
+| `mode` | string | one of the modes below, applied at the next frame |
+| `t` | string, ≤ 8 chars | text shown by `idle` and `alert` (the Mac's clock, `14:32`); remembered until replaced, `""` clears it. The board has no clock of its own. |
+| `ttl` | integer seconds | how long the mode stays before the board falls back to `idle`; `0` = until told otherwise. Overrides the mode's default. |
+| `brightness` | integer 0–255 | applies immediately, persists across modes; may come alone or with a mode |
 
-The board answers every line with `ok` or `err <reason>` on the same port, interleaved with its normal log output.
+Eight agent states and two maintenance modes. Each state must be tellable from the others at a glance across a room, which is why there are not more of them; every state is tied to an event the host can actually observe (see `.hermes/plugins/athena-face/`), not to a mood the model would have to invent.
 
-| Athena state | Mode |
-|---|---|
-| IDLE | `clock` |
-| PROCESSING | `think` |
+| Mode | Agent state | Default ttl | Look |
+|---|---|---|---|
+| `idle` | nothing happening | sticky | two calm cyan-white eyes, blink every 3–5 s; `t` centred below if set |
+| `listen` | a message arrived, the user is talking | 30 s | eyes wider, a green bar under them pulsing in width |
+| `think` | LLM request in flight | 120 s | eyes look up and right, three violet dots cycling above |
+| `work` | a tool is running (shell, MCP, browser) | 300 s | eyes narrowed, an amber segment sweeping along the bottom |
+| `speak` | the reply is being delivered (later: TTS) | 8 s | idle eyes plus five mouth bars bouncing |
+| `alert` | needs the user: plan awaiting approval, brief delivered, question | sticky | idle eyes plus a blinking amber `!`; `t` if set |
+| `error` | something failed: tool, API, disconnect | 10 s | red X eyes, red border |
+| `sleep` | night, do not disturb | sticky | eyes closed, quarter brightness |
+| `test` | wiring check | sticky | red top-left, green top-right, blue bottom-left, white bottom-right, white border |
+| `off` | blank | sticky | output disabled; any other mode re-enables it |
 
-No speak EQ bars until TTS exists.
+The board boots into `test` and stays there until the first command, so a panel can be checked with nothing but power and USB. When a ttl runs out the board returns to `idle` and keeps `t`.
+
+```
+{"mode":"idle","t":"14:32"}   -> ok
+{"mode":"work","ttl":600}     -> ok
+{"brightness":80}             -> ok
+{"mode":"dance"}              -> err bad mode
+```
 
 ## Using it from the Mac
 
@@ -162,24 +176,19 @@ No speak EQ bars until TTS exists.
    screen /dev/cu.usbserial-XXXXXXXX 115200        # leave with Ctrl+A then K
    ```
 
-   Send `{"mode":"test"}` first. Four coloured quadrants with a clean border means the ribbon, the scan lines, and E are right. Then `{"mode":"clock","t":"14:32"}` and `{"mode":"think"}`.
-4. **Talk to it from a script.** pyserial is inside the IDF venv (the `python` of the export shell) or `pip install pyserial` in your own. Deassert DTR and RTS before opening, or the bridge resets the board every time the port opens:
+   Send `{"mode":"test"}` first. Four coloured quadrants with a clean border means the ribbon, the scan lines, and E are right. Then `{"mode":"idle","t":"14:32"}` and `{"mode":"think"}`.
+4. **Talk to it from a script.** `scripts/face.py` in the repo root is the Mac side: standard library only, no pyserial. It resolves the port from `--port`, then `ATHENA_MATRIX_PORT`, then the `## Boards` section of `CLAUDE.md`, then a lone `/dev/cu.usbserial-*` or `/dev/cu.usbmodem*`. It clears DTR and RTS in one step after opening, so the bridge does not reset the board.
 
-   ```python
-   import json, serial
-
-   s = serial.Serial(baudrate=115200, timeout=2)
-   s.port = "/dev/cu.usbserial-XXXXXXXX"
-   s.dtr = False
-   s.rts = False
-   s.open()
-   s.write((json.dumps({"mode": "think"}) + "\n").encode())
-   while (line := s.readline().decode(errors="replace").strip()) not in ("ok", ""):
-       if line.startswith("err"):
-           raise RuntimeError(line)
+   ```bash
+   scripts/face.py test                       # wiring pattern
+   scripts/face.py idle                       # face with the current time
+   scripts/face.py work --ttl 600
+   scripts/face.py --brightness 60
+   scripts/face.py --demo                     # walks through every state, 4 s each
+   scripts/face.py --demo --dry-run --pause 0 # prints the lines it would send, no board needed
    ```
 
-   Only one process can hold the port. Close the monitor before flashing or scripting, or macOS answers `Resource busy`.
+   Only one process can hold the port. Close the monitor before flashing or scripting, or macOS answers `Resource busy`. The `athena-face` plugin holds the port whenever a Hermes session that loaded it is alive.
 
 ### Troubleshooting
 
@@ -198,19 +207,17 @@ No speak EQ bars until TTS exists.
 
 ## Config
 
-Planned `athena.py` block. It writes one line per state change and reads the reply.
+The Hermes side is the project plugin `.hermes/plugins/athena-face/` (enable once with `hermes plugins enable athena-face`, with `HERMES_ENABLE_PROJECT_PLUGINS=true` in `~/.hermes/.env`). It hooks the agent loop (`pre_gateway_dispatch` → listen, `pre_llm_call` → think, `pre_tool_call` → work, `post_tool_call` → think or error, `post_llm_call` → speak, or alert for a cron run, `pre_approval_request` → alert, `api_request_error` → error) and pushes each state to a background thread that owns the serial port through `scripts/face.py`. Hooks never block the agent: if the port is missing or busy the plugin logs one warning and tries again on the next state, no more often than every 30 s. Settings are environment variables in `~/.hermes/.env`:
 
-```yaml
-display:
-  enabled: true
-  transport: serial
-  port: /dev/cu.usbserial-XXXXXXXX
-  baud: 115200
-  brightness_idle: 40
-  brightness_active: 180
+```
+ATHENA_MATRIX_PORT=/dev/cu.usbserial-XXXXXXXX   # optional, else face.py's port resolution
+ATHENA_FACE_BRIGHTNESS=40                        # optional, sent when the port opens
+ATHENA_FACE_SLEEP=23:00-07:00                    # optional, idle shows as sleep in this window
+ATHENA_FACE=0                                    # disable the plugin
+ATHENA_FACE_DRY_RUN=1                            # print the lines instead of opening a port
 ```
 
-If the port cannot be opened, `athena.py` logs the error and continues the turn.
+The board falls back to `idle` on its own when a `think` or `work` outlives its ttl, so a crashed session never leaves the face stuck.
 
 ## Later: Wi-Fi
 
