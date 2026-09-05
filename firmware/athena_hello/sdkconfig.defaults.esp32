@@ -1,0 +1,2 @@
+# ESP32-WROOM-32 DevKit: 4 MB flash. Nothing else is needed for a serial hello.
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y

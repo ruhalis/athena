@@ -32,7 +32,7 @@ void app_main(void)
 {
     hub75_config_t cfg = HUB75_CONFIG_DEFAULT();
     cfg.pins = (hub75_pins_t)BOARD_HUB75_PINS;
-    cfg.brightness = 12;            /* USB-powered wiring check; raise once the panel has its own 5 V supply */
+    cfg.brightness = 255;           /* full; the panel needs its own 5 V supply at this level, USB alone browns out */
     /* cfg.driver = HUB75_DRIVER_FM6126A;  -- only if the panel stays dark with correct wiring */
 
     ESP_ERROR_CHECK(hub75_init(&cfg));

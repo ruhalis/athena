@@ -136,14 +136,14 @@ Eight agent states and two maintenance modes. Each state must be tellable from t
 
 | Mode | Agent state | Default ttl | Look |
 |---|---|---|---|
-| `idle` | nothing happening | sticky | two calm cyan-white eyes, blink every 3–5 s; `t` centred below if set |
-| `listen` | a message arrived, the user is talking | 30 s | eyes wider, a green bar under them pulsing in width |
-| `think` | LLM request in flight | 120 s | eyes look up and right, three violet dots cycling above |
-| `work` | a tool is running (shell, MCP, browser) | 300 s | eyes narrowed, an amber segment sweeping along the bottom |
-| `speak` | the reply is being delivered (later: TTS) | 8 s | idle eyes plus five mouth bars bouncing |
-| `alert` | needs the user: plan awaiting approval, brief delivered, question | sticky | idle eyes plus a blinking amber `!`; `t` if set |
-| `error` | something failed: tool, API, disconnect | 10 s | red X eyes, red border |
-| `sleep` | night, do not disturb | sticky | eyes closed, quarter brightness |
+| `idle` | nothing happening | sticky | cyan aura: a soft ring breathing slowly through the turbulence; `t` in its centre if set |
+| `listen` | a message arrived, the user is talking | 30 s | green aura, a little larger and quicker, pulsing brighter on a 0.7 s beat |
+| `think` | LLM request in flight | 120 s | violet aura shifted up and right, swirling faster, pulsing from dim to bright |
+| `work` | a tool is running (shell, MCP, browser) | 300 s | amber aura, turning fast at a steady bright level |
+| `speak` | the reply is being delivered (later: TTS) | 8 s | cyan aura whose size follows a voice level, a new one every 80 ms |
+| `alert` | needs the user: plan awaiting approval, brief delivered, question | sticky | gold aura flashing once a second; `t` in its centre if set |
+| `error` | something failed: tool, API, disconnect | 10 s | red aura strobing twice a second, shaking, torn by heavy turbulence, red border |
+| `sleep` | night, do not disturb | sticky | dim indigo aura, small and low in the panel, drifting slowly, no haze |
 | `test` | wiring check | sticky | red top-left, green top-right, blue bottom-left, white bottom-right, white border |
 | `off` | blank | sticky | output disabled; any other mode re-enables it |
 
