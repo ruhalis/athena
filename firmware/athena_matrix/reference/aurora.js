@@ -2,7 +2,9 @@
  *
  * Four formless looks share one pipeline. AURA (the default): a port of the
  * LiveKit / Unicorn Studio aura shader, a circle outline drawn dozens of times
- * through a turbulence warp and averaged (licence note at sceneAura). NEBULA:
+ * through a turbulence warp and averaged (licence note at sceneAura); every
+ * state is one row of numbers in that vocabulary and a state change is a
+ * tween between two rows. NEBULA:
  * a ring made of cloud over a low haze. RING: three crisp ribbons on black.
  * CLOUD: soft blobs drifting through a warping field. Each state sets colour,
  * size, rhythm and tendency; `t` sits in the centre.
@@ -482,30 +484,51 @@
    * Unicorn Studio and is licensed under the Polyform Non-Resale License 1.0.0
    * (https://polyformproject.org/licenses/non-resale/1.0.0/, (c) 2026 UNCRN
    * LLC). Changes here: fixed-function JS instead of GLSL, the panel's linear
-   * light pipeline, per-state colours, `t` in the centre, an optional haze.
+   * light pipeline, per-state colours, `t` in the centre, an optional haze,
+   * and one parameter vocabulary for every state so states tween.
    *
    * How it works: a circle outline is drawn ITERATIONS times, each time seen
    * through a turbulence warp at a slightly different phase, and the copies
    * are averaged. Where the copies agree the band is solid; where they fan out
-   * it dissolves. The per-state numbers are the ones LiveKit's hook animates
-   * to (idle, listening, thinking, speaking); work, alert, error and sleep are
-   * added in the same vocabulary. */
+   * it dissolves.
+   *
+   * AURA is the whole vocabulary: the ring's size (scale), the turbulence's
+   * pace (speed), amplitude and frequency, a brightness with a pulse on top
+   * (depth, rate, sharp: 1 a sine breath, 2 a flash, 3 a beat), and four
+   * things that are 0 in idle and fade in where a state uses them: the
+   * voice-driven swell and glow (voice), a tremor of the centre, the red
+   * frame (border) and `t` (text, set by auraParams). Idle is the reference;
+   * every other state is idle with some numbers moved, and listen, think and
+   * work keep idle's cyan within a step of hue so motion tells them apart;
+   * only alert and error change colour outright. The idle/listen/think/speak
+   * geometry is what LiveKit's hook animates to; work, alert, error and sleep
+   * are added in the same vocabulary. Every field is a number, so a state
+   * change is auraMix() over AURA_TWEEN_S, with the colour (linear RGB, so
+   * a fade is a mix of light, not a sweep round the hue wheel) on its own
+   * slower clock AURA_FADE_S, and the two phases (turbulence `anim`, pulse)
+   * are integrated by the caller from the current pace so a speed change
+   * accelerates instead of jumping. aura.c mirrors this table field for
+   * field. */
   var AURA_COL = {
-    idle: [0x1F, 0xD5, 0xF9], listen: [0x3C, 0xF0, 0x8C], think: [0xB4, 0x6E, 0xFF], work: [0xFF, 0xA0, 0x28],
-    speak: [0x1F, 0xD5, 0xF9], alert: [0xFF, 0xC8, 0x14], error: [0xFF, 0x3C, 0x3C], sleep: [0x50, 0x50, 0xC8]
+    idle: [0x1F, 0xD5, 0xF9], listen: [0x24, 0xF2, 0xBF], think: [0x25, 0x7E, 0xFA], work: [0x5C, 0xE4, 0xFF],
+    speak: [0x1F, 0xD5, 0xF9], alert: [0xFF, 0xC8, 0x14], error: [0xFF, 0x3C, 0x3C], sleep: [0x2B, 0x57, 0xD9]
   };
   var AURA_CYAN = [0x1F, 0xD5, 0xF9];
   var AURA = {
-    idle:   { speed: 10, scale: 0.24, amp: 0.9,  freq: 0.4,  bright: 1.0 },      /* LiveKit: scale 0.2, amp 1.2; opened up so `t` fits inside */
-    listen: { speed: 20, scale: 0.30, amp: 1.0,  freq: 0.7,  bright: [1.5, 2.0] },
-    think:  { speed: 30, scale: 0.30, amp: 0.7,  freq: 1.0,  bright: [0.5, 2.5] },  /* LiveKit: amp 0.5; its ripples vanish at 64 px */
-    work:   { speed: 40, scale: 0.28, amp: 0.6,  freq: 1.0,  bright: 1.5 },
-    speak:  { speed: 70, scale: 0.30, amp: 0.75, freq: 1.25, bright: 1.5, volume: true },
-    alert:  { speed: 10, scale: 0.24, amp: 0.9,  freq: 0.4,  bright: 'flash' },
-    error:  { speed: 40, scale: 0.25, amp: 2.0,  freq: 0.8,  bright: 'strobe' },
-    sleep:  { speed: 6,  scale: 0.18, amp: 1.2,  freq: 0.4,  bright: 0.5 }
+    /*        pace      radius       turbulence              brightness   pulse                        extras */
+    idle:   { speed: 10, scale: 0.24, amp: 0.9,  freq: 0.4,  bright: 1.0,  depth: 0.0,  rate: 0.15, sharp: 1, voice: 0, tremor: 0, dy: 0,    haze: 1, border: 0 },   /* LiveKit: scale 0.2, amp 1.2; opened up so `t` fits inside */
+    listen: { speed: 20, scale: 0.30, amp: 1.0,  freq: 0.7,  bright: 1.5,  depth: 0.5,  rate: 1.43, sharp: 1, voice: 0, tremor: 0, dy: 0,    haze: 1, border: 0 },   /* the hook's 0.7 s pulse as a raised cosine */
+    think:  { speed: 30, scale: 0.30, amp: 0.7,  freq: 1.0,  bright: 0.5,  depth: 1.7,  rate: 0.7,  sharp: 1, voice: 0, tremor: 0, dy: 0,    haze: 1, border: 0 },   /* LiveKit: amp 0.5 and off-centre; centred here, a slow deep swell */
+    work:   { speed: 40, scale: 0.28, amp: 0.6,  freq: 1.0,  bright: 1.2,  depth: 0.0,  rate: 0.5,  sharp: 1, voice: 0, tremor: 0, dy: 0,    haze: 1, border: 0 },   /* idle's cyan lifted toward white, turning fast, steady */
+    speak:  { speed: 25, scale: 0.26, amp: 0.9,  freq: 0.8,  bright: 1.2,  depth: 0.0,  rate: 0.5,  sharp: 1, voice: 1, tremor: 0, dy: 0,    haze: 1, border: 0 },   /* idle's ring a little quicker, swelling and glowing with the voice */
+    alert:  { speed: 10, scale: 0.24, amp: 0.9,  freq: 0.4,  bright: 1.0,  depth: 1.5,  rate: 1.0,  sharp: 2, voice: 0, tremor: 0, dy: 0,    haze: 1, border: 0 },   /* idle's ring, gold, flashing once a second */
+    error:  { speed: 40, scale: 0.25, amp: 2.0,  freq: 0.8,  bright: 0.6,  depth: 1.6,  rate: 2.0,  sharp: 3, voice: 0, tremor: 1, dy: 0,    haze: 1, border: 1 },   /* torn, beating twice a second, trembling, framed */
+    sleep:  { speed: 6,  scale: 0.20, amp: 0.8,  freq: 0.4,  bright: 0.6,  depth: 0.25, rate: 0.2,  sharp: 1, voice: 0, tremor: 0, dy: 0.10, haze: 0, border: 0 }    /* idle's ring smaller, dimmer, slower, settled low, no haze */
   };
+  var AURA_FIELDS = ['speed', 'scale', 'amp', 'freq', 'bright', 'depth', 'rate', 'sharp', 'voice', 'tremor', 'dy', 'haze', 'border', 'text', 'r', 'g', 'b', 'hr', 'hg', 'hb'];
   var AURA_BLUR = 0.2, AURA_SPACING = 0.5, AURA_VARIANCE = 0.1, AURA_SMOOTHING = 1.0, AURA_COLOR_SHIFT = 0.05;
+  var AURA_HAZE = 0.03, AURA_VOICE = 0.03, AURA_VOICE_GLOW = 0.4, AURA_TREMOR = 0.025, AURA_TWEEN_S = 0.8, AURA_FADE_S = 2.0, AURA_FADE_DIP = 0.25;
+  var AURA_SYLLABLE_S = 0.14, AURA_PHRASE_S = 0.7, AURA_WRAP_S = 70;   /* the voice repeats within 70 s, like aura.c's clock */
 
   function rgb2hsv(r, g, b) {
     var mx = Math.max(r, g, b), mn = Math.min(r, g, b), d = mx - mn, h = 0;
@@ -523,14 +546,56 @@
     }
   }
 
+  /* The full parameter set of one state: the AURA row, `text` (1 where the
+   * state shows `t`: idle and alert, unless withText says otherwise) and the
+   * colour in linear light, so a tween mixes the two colours' light, and the
+   * haze as whole driver levels per channel (hr, hg, hb), so a steady state's
+   * background is flat and a fade dithers between two levels. */
+  function auraParams(mode, withText) {
+    var s = AURA[mode] || AURA.idle, c = AURA_COL[mode] || AURA_CYAN;
+    var p = {}, k;
+    for (k in s) p[k] = s[k];
+    p.text = withText == null ? (mode === 'idle' || mode === 'alert' ? 1 : 0) : (withText ? 1 : 0);
+    p.r = Math.pow(c[0] / 255, 2.2); p.g = Math.pow(c[1] / 255, 2.2); p.b = Math.pow(c[2] / 255, 2.2);
+    p.hr = hazeLevel(p.r); p.hg = hazeLevel(p.g); p.hb = hazeLevel(p.b);
+    return p;
+  }
+  /* The haze one colour channel (linear) makes, as a whole number of the driver's 31 levels. */
+  function hazeLevel(lin) { return Math.round(clamp01((AURA_HAZE * lin - 0.006) / 0.994) * 31); }
+  /* a + (b - a) * e, field by field, except the colour and the haze, which
+   * mix at f (default e): the shape tweens over AURA_TWEEN_S, the colour
+   * fades over the slower AURA_FADE_S. The colour dips a little halfway,
+   * scaled by how different the two colours are, so a blend of two saturated
+   * colours reads as one giving way to the other rather than a flash of
+   * white between them, and a change that keeps the colour does not dim. */
+  function auraMix(a, b, e, f) {
+    var o = {}, i, k;
+    if (f == null) f = e;
+    var d = Math.min(1, Math.max(Math.abs(b.r - a.r), Math.abs(b.g - a.g), Math.abs(b.b - a.b)));
+    var dip = 1 - AURA_FADE_DIP * d * 4 * f * (1 - f);
+    for (i = 0; i < AURA_FIELDS.length; i++) {
+      k = AURA_FIELDS[i];
+      if (k === 'r' || k === 'g' || k === 'b') o[k] = (a[k] + (b[k] - a[k]) * f) * dip;
+      else if (k === 'hr' || k === 'hg' || k === 'hb') o[k] = a[k] + (b[k] - a[k]) * f;
+      else o[k] = a[k] + (b[k] - a[k]) * e;
+    }
+    return o;
+  }
+  function auraEase(u) { u = clamp01(u); return u * u * (3 - 2 * u); }   /* the tween's ease in and out */
+  /* p with the light off: what a cold start fades in from. */
+  function auraDark(p) { var o = auraMix(p, p, 0); o.bright = 0; o.depth = 0; o.haze = 0; o.border = 0; o.text = 0; return o; }
+  /* The phases a fixed state has at time t; a live caller integrates them instead. */
+  function auraPhases(p, t) { return { anim: frac(t * 0.05 * p.speed / TAU) * TAU, pulse: frac(t * p.rate) }; }
+
   /* turb(): the shader's turbulence warp, four layers of rotated sine
-   * displacement. pos in the shader's frame (-0.5..0.5). */
-  function auraTurb(px, py, t, it, freq, amp, speed, out) {
+   * displacement. pos in the shader's frame (-0.5..0.5); anim is the
+   * turbulence phase in radians (animTime upstream). */
+  function auraTurb(px, py, anim, it, freq, amp, out) {
     var m00 = 0.6, m10 = -0.25, m01 = 0.25, m11 = 0.9;       /* rotation, column-major like GLSL */
-    var frequency = 2 + 13 * freq, amplitude = amp, animTime = t * 0.1 * speed;
+    var frequency = 2 + 13 * freq, amplitude = amp;
     for (var i = 0; i < 4; i++) {
       var rx = px * m00 + py * m10, ry = px * m01 + py * m11;
-      var wx = Math.sin(frequency * rx + i * animTime + it), wy = Math.sin(frequency * ry + i * animTime + it);
+      var wx = Math.sin(frequency * rx + i * anim + it), wy = Math.sin(frequency * ry + i * anim + it);
       var k = amplitude / frequency;
       px += k * m00 * wx; py += k * m10 * wy;
       /* rotation *= mat2(0.6, -0.8, 0.8, 0.6) */
@@ -542,53 +607,66 @@
     out[0] = px; out[1] = py;
   }
 
-  function sceneAura(mode, t, frame, opts, acc) {
-    var cfg = AURA[mode] || AURA.idle, rcfg = RCFG[mode] || RCFG.idle;
+  /* One frame from a parameter set p (auraParams or an auraMix of two), the
+   * wall time t (voice and tremor run on it) and the phases {anim, pulse}. */
+  /* A random level held for `period` seconds and eased into the next one; the
+   * sequence repeats every AURA_WRAP_S so a wrapped clock stays continuous. */
+  function heldRandom(t, period, salt) {
+    var count = Math.round(AURA_WRAP_S / period), k = Math.floor(t / period), u = smooth(0, 1, frac(t / period));
+    var e0 = hash((k % count + 1) * salt), e1 = hash(((k + 1) % count + 1) * salt);   /* +1 as in aura.c, whose hash of 0 is 0 */
+    return e0 + (e1 - e0) * u;
+  }
+
+  /* The voice level, 0..1: syllables under a phrase loudness gated so the
+   * quietest stretches are rests. Speech in bursts with pauses, not noise. */
+  function auraVoice(t) {
+    var syllable = heldRandom(t, AURA_SYLLABLE_S, 7919), phrase = smooth(0.15, 0.85, heldRandom(t, AURA_PHRASE_S, 104729));
+    return syllable * phrase;
+  }
+
+  function sceneAura(p, t, phases, opts, acc) {
     var N = opts.iterations || 36;
-    var base = opts.cyanOnly ? AURA_CYAN : (AURA_COL[mode] || AURA_CYAN);
     var x, y, i, k;
-    var speed = cfg.speed, scale = cfg.scale, amp = cfg.amp, freq = cfg.freq, bright = cfg.bright;
-    var pulse = 0.5 + 0.5 * Math.sin(TAU * t);
 
-    if (Array.isArray(bright)) {                             /* the hook's 0.35 s mirrored pulse */
-      var ph = frac(t / 0.7), tri = ph < 0.5 ? ph * 2 : 2 - ph * 2;
-      tri = 1 - (1 - tri) * (1 - tri);                        /* easeOut */
-      bright = bright[0] + (bright[1] - bright[0]) * tri;
-    } else if (bright === 'flash') {
-      bright = 1.0 + 1.5 * pulse * pulse;
-    } else if (bright === 'strobe') {
-      bright = Math.sin(TAU * 2 * t) > 0 ? 2.2 : 0.6;
-    }
-    if (cfg.volume) {
-      var kk = Math.floor(t / 0.08), u = smooth(0, 1, frac(t / 0.08));
-      var e0 = hash(kk * 7919), e1 = hash((kk + 1) * 7919);
-      scale = 0.2 + 0.2 * (e0 + (e1 - e0) * u);
-    }
-    if (mode === 'sleep') bright *= 0.85 + 0.15 * Math.sin(TAU * t / 5);
+    /* The pulse: a raised cosine, sharpened into a flash or a beat by the exponent. */
+    var wave = 0.5 - 0.5 * Math.cos(TAU * phases.pulse);
+    if (p.sharp !== 1) wave = Math.pow(wave, p.sharp);
+    var bright = p.bright + p.depth * wave;
 
-    /* Per-iteration colour: the hue drifts a little across the copies. */
+    /* The voice: a level in syllables under a phrase envelope swells the ring and lifts its glow. */
+    var scale = p.scale;
+    if (p.voice > 0) {
+      var level = p.voice * auraVoice(t);
+      scale += AURA_VOICE * level;
+      bright += AURA_VOICE_GLOW * level;
+    }
+    /* The tremor: two sines per axis, 7 to 13 Hz, wander the centre. */
+    var dx = 0, dy = p.dy;
+    if (p.tremor > 0) {
+      var tk = p.tremor * AURA_TREMOR;
+      dx += tk * (0.6 * Math.sin(TAU * 7 * t) + 0.4 * Math.sin(TAU * 11 * t));
+      dy += tk * (0.6 * Math.sin(TAU * 9 * t + 1) + 0.4 * Math.sin(TAU * 13 * t + 2));
+    }
+
+    /* The base colour lives in linear light (that is what fades); the copies
+     * take it as HSV so the hue can drift a little across them. */
+    var hsv = rgb2hsv(Math.pow(p.r, 1 / 2.2), Math.pow(p.g, 1 / 2.2), Math.pow(p.b, 1 / 2.2));
     var cols = [];
-    var hsv = rgb2hsv(base[0] / 255, base[1] / 255, base[2] / 255);
-    for (i = 1; i <= N; i++) {
-      var iter = i / N, hh = frac(hsv[0] + (1 - iter) * AURA_COLOR_SHIFT * 0.3);
-      cols.push(hsv2rgb(hh, hsv[1], hsv[2]));
-    }
-    var ts = t * 0.5, spacing = 1 + (TAU - 1) * AURA_SPACING;
-    var st = [0, 0], prev = [0, 0];
-    var hazeCol = lin(base[0], base[1], base[2]);             /* the state's own colour */
-    var haze = opts.haze != null ? opts.haze : 0.03;
-    if (mode === 'sleep') haze = 0;
+    for (i = 1; i <= N; i++) cols.push(hsv2rgb(frac(hsv[0] + (1 - i / N) * AURA_COLOR_SHIFT * 0.3), hsv[1], hsv[2]));
+    /* The haze in driver levels; a fraction is dithered between two levels below. */
+    var hazeLv = [p.haze * p.hr, p.haze * p.hg, p.haze * p.hb], LEVEL_LIN = 0.994 / 31;
+    var borderPulse = p.border * (0.4 + 0.6 * wave);
     var RED = lin(255, 30, 30);
+    var spacing = 1 + (TAU - 1) * AURA_SPACING, anim = phases.anim;
+    var st = [0, 0], prev = [0, 0];
 
     for (y = 0; y < H; y++) {
       for (x = 0; x < W; x++) {
-        var px = (x + 0.5) / W - 0.5, py = 0.5 - (y + 0.5) / H;
-        var cx = mode === 'think' ? px - 0.06 : px, cy = mode === 'think' ? py - 0.06 : mode === 'sleep' ? py + 0.12 : py;
-        if (mode === 'error') { cx += (hash(frame * 3) - 0.5) * 0.06; cy += (hash(frame * 3 + 1) - 0.5) * 0.06; }
-        auraTurb(cx, cy, ts, -1 / N, freq, amp, speed, prev);
+        var cx = (x + 0.5) / W - 0.5 + dx, cy = 0.5 - (y + 0.5) / H + dy;
+        auraTurb(cx, cy, anim, -1 / N, p.freq, p.amp, prev);
         var ppr = 0, ppg = 0, ppb = 0;
         for (i = 1; i <= N; i++) {
-          auraTurb(cx, cy, ts, (i / N) * spacing, freq, amp, speed, st);
+          auraTurb(cx, cy, anim, (i / N) * spacing, p.freq, p.amp, st);
           var d = Math.abs(Math.sqrt(st[0] * st[0] + st[1] * st[1]) - scale);
           var ddx = st[0] - prev[0], ddy = st[1] - prev[1], pd = Math.sqrt(ddx * ddx + ddy * ddy);
           prev[0] = st[0]; prev[1] = st[1];
@@ -603,15 +681,15 @@
         r = r / (1 + r) * bright; g = g / (1 + g) * bright; b = b / (1 + b) * bright;
         r = clamp01(r); g = clamp01(g); b = clamp01(b);
         /* The shader's output is display colour; the panel wants linear light. */
-        var lr = Math.pow(r, 2.2), lg = Math.pow(g, 2.2), lb = Math.pow(b, 2.2);
+        var th = (BAYER4[(y & 3) * 4 + (x & 3)] + 0.5) / 16;
+        var h0 = Math.floor(hazeLv[0] + 1 - th), h1 = Math.floor(hazeLv[1] + 1 - th), h2 = Math.floor(hazeLv[2] + th);   /* red and green against blue's complement, as aura.c */
+        var lr = Math.pow(r, 2.2) + (h0 > 0 ? 0.006 + h0 * LEVEL_LIN : 0);
+        var lg = Math.pow(g, 2.2) + (h1 > 0 ? 0.006 + h1 * LEVEL_LIN : 0);
+        var lb = Math.pow(b, 2.2) + (h2 > 0 ? 0.006 + h2 * LEVEL_LIN : 0);
 
-        if (haze > 0) {
-          var hw = haze;
-          lr += hw * hazeCol[0]; lg += hw * hazeCol[1]; lb += hw * hazeCol[2];
-        }
-        if (mode === 'error') {
+        if (borderPulse > 0) {
           var e = Math.min(x, y, 63 - x, 63 - y);
-          var bw = (e === 0 ? 1 : Math.exp(-e / 2.5) * 0.4) * (0.6 + 0.4 * Math.sin(TAU * 2 * t));
+          var bw = (e === 0 ? 1 : Math.exp(-e / 2.5) * 0.4) * borderPulse;
           lr += bw * RED[0]; lg += bw * RED[1]; lb += bw * RED[2];
         }
         k = (y * W + x) * 3;
@@ -619,22 +697,25 @@
       }
     }
 
-    if (rcfg.text && opts.text) {
-      var tmask = textMask(opts.text, 29);
+    if (p.text > 0 && opts.text) {
+      var tmask = textMask(opts.text, 29), halo = 1 - 0.75 * p.text, keep = 1 - 0.8 * p.text, ink = 0.8 * p.text;
       for (i = 0; i < W * H; i++) {
         var mv = tmask[i];
         if (!mv) continue;
         var j = i * 3;
-        if (mv === 1) { acc[j] *= 0.25; acc[j + 1] *= 0.25; acc[j + 2] *= 0.25; }
-        else { acc[j] = acc[j] * 0.2 + TEXT_COL[0] * 0.8; acc[j + 1] = acc[j + 1] * 0.2 + TEXT_COL[1] * 0.8; acc[j + 2] = acc[j + 2] * 0.2 + TEXT_COL[2] * 0.8; }
+        if (mv === 1) { acc[j] *= halo; acc[j + 1] *= halo; acc[j + 2] *= halo; }
+        else { acc[j] = acc[j] * keep + TEXT_COL[0] * ink; acc[j + 1] = acc[j + 1] * keep + TEXT_COL[1] * ink; acc[j + 2] = acc[j + 2] * keep + TEXT_COL[2] * ink; }
       }
     }
-    return cfg;
+    return p;
   }
 
   /* Render one frame. opts: look ('aura' | 'nebula' | 'ring' | 'cloud'), bits (5), dither
-   * (true | 'temporal' | false), text ('14:32'),
-   * frame (temporal dither phase), stats ({duty, frames}). */
+   * (true | 'temporal' | false), text ('14:32'), iterations (36),
+   * frame (temporal dither phase), stats ({duty, frames}). For the aura:
+   * params (an auraParams() or auraMix() result, default the mode's own) and
+   * phases ({anim, pulse}, default the fixed state's at t) let a live caller
+   * render a tween between states with integrated phases. */
   function render(mode, t, opts) {
     opts = opts || {};
     var bits = opts.bits || 5, dither = opts.dither !== false;
@@ -645,7 +726,10 @@
     if (opts.look === 'cloud') sceneCloud(mode, t, frame, opts, acc);
     else if (opts.look === 'ring') sceneRing(mode, t, frame, opts, acc);
     else if (opts.look === 'nebula') sceneNebula(mode, t, frame, opts, acc);
-    else sceneAura(mode, t, frame, opts, acc);
+    else {
+      var params = opts.params || auraParams(mode, opts.withText);
+      sceneAura(params, t, opts.phases || auraPhases(params, t), opts, acc);
+    }
 
     /* The driver: quantise linear light to the bit depth, then encode for a monitor. */
     var maxL = (1 << bits) - 1, duty = 0;
@@ -665,7 +749,9 @@
     return out;
   }
 
-  var api = { W: W, H: H, STATES: STATES, CFG: CFG, PAL: PAL, render: render };
+  var api = { W: W, H: H, STATES: STATES, CFG: CFG, PAL: PAL, render: render,
+    AURA: AURA, AURA_COL: AURA_COL, AURA_TWEEN_S: AURA_TWEEN_S, AURA_FADE_S: AURA_FADE_S,
+    auraParams: auraParams, auraMix: auraMix, auraEase: auraEase, auraDark: auraDark, auraPhases: auraPhases };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.Aurora = api;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

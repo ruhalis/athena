@@ -151,19 +151,23 @@ The board boots into the wiring test and stays there until the first command,
 so a fresh panel can be checked with nothing but power and USB. The eight agent
 states are one picture, the aura (`main/aura.c`): a circle outline seen through
 a turbulence warp, drawn as a soft ring in the state's colour over a faint haze
-of the same colour, moving at the state's pace.
+of the same colour, moving at the state's pace. The palette stays close: listen,
+think and work keep idle's cyan within a step of hue, so motion is what tells
+them apart, and only alert and error change colour outright. A state change
+never cuts: the ring eases from one state's numbers to the next over 0.8 s,
+the colour and the haze behind the ring fade more slowly over 2 s, and `t` fades with it.
 
 | State | Correct result |
 |---|---|
 | test (boot) | red top-left, green top-right, blue bottom-left, white bottom-right, thin white border. A swapped colour line shows as the wrong colour in a quadrant; a missing E as a wrong bottom half; a wrong A..D as scrambled rows |
 | idle | a cyan ring breathing slowly, the time in its centre if the Mac sent one |
-| listen | a green ring, a little larger and quicker, pulsing brighter on a 0.7 s beat |
-| think | a violet ring shifted up and right, swirling faster, pulsing from dim to bright |
-| work | an amber ring turning fast at a steady bright level |
-| speak | a cyan ring whose size jumps with a voice level every 80 ms |
+| listen | a mint ring, idle's hue a step toward green, a little larger and quicker, a quick shallow pulse on a 0.7 s beat |
+| think | an azure ring, idle's hue a step toward blue, swirling faster, swelling slowly from dim to bright |
+| work | an ice ring, idle's cyan lifted toward white, turning fast at a steady bright level |
+| speak | a cyan ring, idle's a little quicker, swelling and glowing with a voice level that comes in syllables and phrases |
 | alert | a gold ring flashing once a second, the time in its centre if the Mac sent one |
-| error | a red ring strobing twice a second, shaking and torn by heavy turbulence, inside a red border; gone after 10 s |
-| sleep | a dim indigo ring, small and low in the panel, drifting slowly, no haze |
+| error | a red ring torn by heavy turbulence, beating twice a second, trembling, in a pulsing red frame |
+| sleep | a small dim deep-blue ring, low in the panel, drifting slowly, no haze |
 
 `scripts/face.py --demo` walks through all of them, 4 s each.
 

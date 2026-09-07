@@ -6,16 +6,18 @@ Mac hub (`athena.py`) over WebSocket; the matrix is wired over USB serial for
 now. The Mac does STT, the Hermes turn, and
 TTS; this board does wake word, echo cancellation, capture, and playback.
 
-Status: design note. Nothing in `firmware/athena_audio/` exists yet.
+Status: design note. Nothing in `firmware/athena_audio/` exists yet. The
+mics, amp, and speaker were ordered on 2026-09-05 (ozon.kz item numbers in
+the table); the wiring and enclosure sections assume those exact modules.
 
 ## Parts
 
 | Part | Choice | Why |
 |---|---|---|
 | MCU | ESP32-S3-DevKitC-1 **N16R8** (WROOM-1, 16 MB flash, 8 MB octal PSRAM) | ESP-SR needs PSRAM for AFE buffers and models |
-| Mics ×2 | **ICS-43434** I2S breakouts, same batch | 65 dBA SNR meets Espressif's "≥64 dB recommended". INMP441 is 61 dBA, below their 62 dB floor; it works but wake range suffers |
-| Amp | MAX98357A I2S class-D breakout | 3.2 W into 4 Ω at 5 V, accepts 16/24/32-bit slots, SD pin gives a mute/enable |
-| Speaker | 4 Ω 3 W full-range, 40–50 mm, in a sealed chamber | Voice band only; small sealed box is enough |
+| Mics ×2 | **ICS-43434** I2S breakouts, same batch. Bought: the 16.8 × 13 mm rectangular module with the part number on the silkscreen, 6 pins (VDD, GND, SD, SCK, WS, L/R), two mounting holes, bottom port through the PCB (ozon.kz 3853348206) | 65 dBA SNR meets Espressif's "≥64 dB recommended". INMP441 is 61 dBA, below their 62 dB floor; it works but wake range suffers. On arrival check the can size: ICS-43434 is 3.5 × 2.65 mm, INMP441 is 4.72 × 3.76 mm |
+| Amp | MAX98357A I2S class-D breakout. Bought: the common purple board with a screw terminal and pins LRC, BCLK, DIN, GAIN, SD, GND, VIN (ozon.kz 1620664040) | 3.2 W into 4 Ω at 5 V, accepts 16/24/32-bit slots, SD pin gives a mute/enable |
+| Speaker | 4 Ω 3 W full-range, 40–50 mm, in a sealed chamber. Bought: KSV FR0021, 50 mm round, 4 Ω 3 W, a bare driver with solder tabs, so it needs its own leads and a chamber (ozon.kz 797046558) | Voice band only; small sealed box is enough. Ozon had no pre-enclosed 40–50 mm speaker |
 | Power | 5 V ≥ 2 A USB-C adapter for this board, or a shared 5 V ≥ 6 A rail with the matrix | Amp peaks near 1 A; matrix can pull 4 A |
 | Caps | 470–1000 µF across amp VIN/GND; 100 nF at each mic VDD | Class-D current spikes and mic PSRR |
 | Optional | Momentary button for push-to-talk | Lets you test the whole loop before the wake word works |
@@ -36,7 +38,8 @@ echo reference offset a constant, which is what makes software AEC workable.
 | I2S WS → mic WS ×2, amp LRC | 6 | |
 | I2S DIN ← mic SD (both mics on one line) | 7 | mic A `L/R` → GND (left slot), mic B `L/R` → 3V3 (right slot) |
 | I2S DOUT → amp DIN | 15 | |
-| Amp SD_MODE | 16 | low = shutdown (no idle hiss), high = on |
+| Amp SD_MODE | 16 | low = shutdown (no idle hiss), high = on. A 3.3 V high selects the **left** slot, so the player writes mono into the left slot (or both); the on-board divider only matters when the pin floats |
+| Amp GAIN | unconnected | 9 dB default; volume is capped in software, see the 102 dB rule below |
 | PTT button (optional) | 4 | to GND, internal pull-up |
 | On-board RGB LED | 48 on v1.0 boards, 38 on v1.1 | state debug only |
 | Mic VDD | 3V3 | |

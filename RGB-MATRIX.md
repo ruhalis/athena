@@ -137,15 +137,17 @@ Eight agent states and two maintenance modes. Each state must be tellable from t
 | Mode | Agent state | Default ttl | Look |
 |---|---|---|---|
 | `idle` | nothing happening | sticky | cyan aura: a soft ring breathing slowly through the turbulence; `t` in its centre if set |
-| `listen` | a message arrived, the user is talking | 30 s | green aura, a little larger and quicker, pulsing brighter on a 0.7 s beat |
-| `think` | LLM request in flight | 120 s | violet aura shifted up and right, swirling faster, pulsing from dim to bright |
-| `work` | a tool is running (shell, MCP, browser) | 300 s | amber aura, turning fast at a steady bright level |
-| `speak` | the reply is being delivered (later: TTS) | 8 s | cyan aura whose size follows a voice level, a new one every 80 ms |
+| `listen` | a message arrived, the user is talking | 30 s | mint aura, idle's hue a step toward green, a little larger and quicker, a quick shallow pulse on a 0.7 s beat |
+| `think` | LLM request in flight | 120 s | azure aura, idle's hue a step toward blue, swirling faster, swelling slowly from dim to bright |
+| `work` | a tool is running (shell, MCP, browser) | 300 s | ice aura, idle's cyan lifted toward white, turning fast at a steady bright level |
+| `speak` | the reply is being delivered (later: TTS) | 8 s | cyan aura, idle's ring a little quicker, swelling and glowing with a voice level that comes in syllables and phrases |
 | `alert` | needs the user: plan awaiting approval, brief delivered, question | sticky | gold aura flashing once a second; `t` in its centre if set |
-| `error` | something failed: tool, API, disconnect | 10 s | red aura strobing twice a second, shaking, torn by heavy turbulence, red border |
-| `sleep` | night, do not disturb | sticky | dim indigo aura, small and low in the panel, drifting slowly, no haze |
+| `error` | something failed: tool, API, disconnect | 10 s | red aura torn by heavy turbulence, beating twice a second, trembling, in a pulsing red frame |
+| `sleep` | night, do not disturb | sticky | dim deep-blue aura, smaller and low in the panel, drifting slowly, no haze |
 | `test` | wiring check | sticky | red top-left, green top-right, blue bottom-left, white bottom-right, white border |
 | `off` | blank | sticky | output disabled; any other mode re-enables it |
+
+Every state is the idle picture with some numbers moved (size, pace, turbulence, brightness and pulse, colour). The palette stays close: `listen`, `think` and `work` keep idle's cyan within a step of hue, so motion is what tells them apart, and only `alert` and `error` change colour outright. A change of state is a tween: the board eases from whatever is on the panel to the new state over 0.8 s, the colour fades more slowly over 2 s as a mix of the two colours' light rather than a sweep through the hues between, dimming a little halfway, the haze behind the ring blends the same way, `t` fades with it, and the turbulence keeps its phase, so nothing ever cuts. Out of `test` or `off` the next state fades in from dark.
 
 The board boots into `test` and stays there until the first command, so a panel can be checked with nothing but power and USB. When a ttl runs out the board returns to `idle` and keeps `t`.
 

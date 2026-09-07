@@ -18,7 +18,9 @@
  *   - added states: work, alert, error and sleep next to LiveKit's idle,
  *     listening, thinking and speaking;
  *   - the `t` text in the centre of the ring;
- *   - a haze of the state's colour over the whole panel.
+ *   - a haze of the state's colour over the whole panel;
+ *   - every state is the idle picture with different numbers, and a state
+ *     change tweens those numbers instead of cutting.
  *
  * How it works: a circle outline is drawn AURA_COPIES times, each time seen
  * through a turbulence warp at a slightly different phase, and the copies are
@@ -26,9 +28,23 @@
  * dissolves. The reference for every number here is reference/aurora.js
  * (sceneAura); where this file and that one differ, that one is right.
  *
+ * One vocabulary for all eight states (aura_params_t): the ring's size, the
+ * turbulence's pace, amplitude and frequency, a brightness with a pulse on
+ * top (depth, rate, sharpness), and four things that are 0 in idle and fade
+ * in where a state uses them: the voice (speak: the ring swells and glows
+ * with a level that comes in syllables and phrases), a tremor of the centre
+ * (error), the red frame (error), and `t`. The palette stays close: listen,
+ * think and work keep idle's cyan within a step of hue, so motion is what
+ * tells them apart; only alert and error change colour outright. A state
+ * change snapshots the numbers on screen and eases them to the new state's
+ * over AURA_TWEEN_S, except the colour, which fades more slowly over
+ * AURA_FADE_S as a mix of the two colours' light rather than a sweep round
+ * the hue wheel; the turbulence and pulse phases are integrated from the
+ * current pace, so nothing on the panel ever jumps.
+ *
  * Per frame: shader at 32x32 -> display colour -> linear light -> bilinear
- * 2x -> haze, error border, `t` -> 5-bit level with a 4x4 Bayer dither -> the
- * byte the driver's gamma table maps back to exactly that level.
+ * 2x -> haze, frame, `t` -> 5-bit level with a 4x4 Bayer dither -> the byte
+ * the driver's gamma table maps back to exactly that level.
  */
 #include <math.h>
 #include <stdbool.h>
@@ -61,42 +77,70 @@ static const char *TAG = "aura";
 #define AURA_VARIANCE       0.1f
 #define AURA_SMOOTHING      1.0f
 #define AURA_COLOR_SHIFT    0.05f
-#define AURA_HAZE           0.03f       /* linear light, in the state's colour */
+#define AURA_HAZE           0.03f       /* the haze is this much of the state's colour, snapped to whole driver levels per channel */
+#define AURA_VOICE          0.03f       /* speak: the ring radius grows up to this with the voice level */
+#define AURA_VOICE_GLOW     0.4f        /* speak: the brightness grows up to this with the voice level */
+#define AURA_SYLLABLE_S     0.14f       /* speak: a new voice sample this often (500 per TIME_WRAP_S) */
+#define AURA_PHRASE_S       0.7f        /* speak: a new phrase loudness this often (100 per TIME_WRAP_S) */
+#define AURA_TREMOR         0.025f      /* error: the centre wanders this far, shader units */
+#define AURA_TWEEN_S        0.8f        /* a state change eases over this long */
+#define AURA_FADE_S         2.0f        /* the colour fades over this long, slower than the shape */
+#define AURA_FADE_DIP       0.25f       /* the colour dims this much halfway through a fade */
+#define AURA_DT_MAX         0.1f        /* a stall longer than this counts as this */
 #define AURA_TOE            0.006f      /* linear light below this is level 0 */
 #define AURA_LEVELS         31          /* the driver's 5 bit planes */
+#define LEVEL_LIN           ((1.0f - AURA_TOE) / (float)AURA_LEVELS)   /* linear light per level above the toe */
 #define AURA_LOG_US         5000000     /* frame-time log period */
 
 #define TAU_F               6.28318530717958647692f
-#define TAU_D               6.28318530717958647692
-#define TIME_WRAP_S         70.0        /* every rhythm below repeats within 70 s (0.7, 1, 0.5, 5, 0.08) */
+#define TIME_WRAP_S         70.0        /* the voice and tremor rhythms repeat within 70 s */
 #define SIN_N               256         /* sine table entries per turn */
 #define IDX_PER_RAD         ((float)SIN_N / TAU_F)
 
-typedef enum { BR_CONST, BR_PULSE, BR_FLASH, BR_STROBE } bright_kind_t;
+/* Every number that makes one state look like itself. All floats, so a tween
+ * is one loop over the struct; the colour is linear RGB so a fade between two
+ * colours is a mix of their light, softening through a pale blend instead of
+ * sweeping through every hue in between. */
+typedef struct {
+    float speed;                        /* turbulence pace: the phase advances 0.05 * speed rad/s */
+    float scale;                        /* ring radius, shader units (the panel is 1 across) */
+    float amp, freq;                    /* turbulence amplitude and frequency knob */
+    float bright;                       /* brightness at the bottom of the pulse (the tonemap multiplier) */
+    float depth;                        /* the pulse adds up to this on top */
+    float rate;                         /* pulses per second */
+    float sharp;                        /* pulse shape: 1 a sine breath, 2 a flash, 3 a beat */
+    float voice;                        /* 0..1: the size and brightness follow a voice level */
+    float tremor;                       /* 0..1: the centre wanders quickly */
+    float dy;                           /* the ring sits this far down (+) in the shader's frame */
+    float haze;                         /* 0..1 of the state's haze */
+    float border;                       /* 0..1: the pulsing red frame */
+    float text;                         /* 0..1: `t` in the centre */
+    float r, g, b;                      /* the base colour, linear light */
+    float hr, hg, hb;                   /* the haze, driver levels per channel: whole numbers in a steady
+                                         * state (a flat background), dithered between them while it fades */
+} aura_params_t;
+
+#define AURA_NPARAMS        (sizeof(aura_params_t) / sizeof(float))
 
 typedef struct {
-    float speed, scale, amp, freq;
-    bright_kind_t kind;
-    float b0, b1;                       /* BR_CONST: b0; BR_PULSE: b0..b1 on the hook's 0.35 s mirrored pulse */
-    bool voice;                         /* speak: scale follows a random level resampled every 80 ms */
-    bool shake;                         /* error: a per-frame random shift of +-0.03 */
-    float dx, dy;                       /* shift of the sample point in the shader's frame */
-    bool haze;
+    float speed, scale, amp, freq, bright, depth, rate, sharp, voice, tremor, dy, haze, border;
     uint8_t col[3];                     /* sRGB */
-} aura_cfg_t;
+} aura_state_t;
 
-/* AURA and AURA_COL from aurora.js. The idle/listen/think/speak numbers are the
- * ones LiveKit's hook animates to; work, alert, error and sleep are added in
- * the same vocabulary. */
-static const aura_cfg_t cfgs[FACE_MODE_SLEEP + 1] = {
-    [FACE_MODE_IDLE]   = { .speed = 10, .scale = 0.24f, .amp = 0.9f,  .freq = 0.4f,  .kind = BR_CONST,  .b0 = 1.0f, .haze = true, .col = { 0x1F, 0xD5, 0xF9 } },
-    [FACE_MODE_LISTEN] = { .speed = 20, .scale = 0.30f, .amp = 1.0f,  .freq = 0.7f,  .kind = BR_PULSE,  .b0 = 1.5f, .b1 = 2.0f, .haze = true, .col = { 0x3C, 0xF0, 0x8C } },
-    [FACE_MODE_THINK]  = { .speed = 30, .scale = 0.30f, .amp = 0.7f,  .freq = 1.0f,  .kind = BR_PULSE,  .b0 = 0.5f, .b1 = 2.5f, .dx = -0.06f, .dy = -0.06f, .haze = true, .col = { 0xB4, 0x6E, 0xFF } },
-    [FACE_MODE_WORK]   = { .speed = 40, .scale = 0.28f, .amp = 0.6f,  .freq = 1.0f,  .kind = BR_CONST,  .b0 = 1.5f, .haze = true, .col = { 0xFF, 0xA0, 0x28 } },
-    [FACE_MODE_SPEAK]  = { .speed = 70, .scale = 0.30f, .amp = 0.75f, .freq = 1.25f, .kind = BR_CONST,  .b0 = 1.5f, .voice = true, .haze = true, .col = { 0x1F, 0xD5, 0xF9 } },
-    [FACE_MODE_ALERT]  = { .speed = 10, .scale = 0.24f, .amp = 0.9f,  .freq = 0.4f,  .kind = BR_FLASH,  .haze = true, .col = { 0xFF, 0xC8, 0x14 } },
-    [FACE_MODE_ERROR]  = { .speed = 40, .scale = 0.25f, .amp = 2.0f,  .freq = 0.8f,  .kind = BR_STROBE, .shake = true, .haze = true, .col = { 0xFF, 0x3C, 0x3C } },
-    [FACE_MODE_SLEEP]  = { .speed = 6,  .scale = 0.18f, .amp = 1.2f,  .freq = 0.4f,  .kind = BR_CONST,  .b0 = 0.5f, .dy = 0.12f, .haze = false, .col = { 0x50, 0x50, 0xC8 } },
+/* AURA and AURA_COL from aurora.js. Idle is the reference; every other state
+ * is idle with some of these numbers moved. The idle/listen/think/speak
+ * geometry is what LiveKit's hook animates to; work, alert, error and sleep
+ * are added in the same vocabulary. */
+static const aura_state_t states[FACE_MODE_SLEEP + 1] = {
+    /*                     speed scale  amp   freq  bright depth rate  sharp voice tremor dy    haze border   colour */
+    [FACE_MODE_IDLE]   = { 10,   0.24f, 0.9f, 0.4f, 1.0f,  0.0f, 0.15f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, { 0x1F, 0xD5, 0xF9 } },   /* cyan, steady, breathing through the turbulence */
+    [FACE_MODE_LISTEN] = { 20,   0.30f, 1.0f, 0.7f, 1.5f,  0.5f, 1.43f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, { 0x24, 0xF2, 0xBF } },   /* mint: idle's hue a step toward green, larger, a quick shallow pulse */
+    [FACE_MODE_THINK]  = { 30,   0.30f, 0.7f, 1.0f, 0.5f,  1.7f, 0.7f,  1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, { 0x25, 0x7E, 0xFA } },   /* azure: idle's hue a step toward blue, swirling faster, a slow deep swell */
+    [FACE_MODE_WORK]   = { 40,   0.28f, 0.6f, 1.0f, 1.2f,  0.0f, 0.5f,  1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, { 0x5C, 0xE4, 0xFF } },   /* ice: idle's cyan lifted toward white, turning fast, steady */
+    [FACE_MODE_SPEAK]  = { 25,   0.26f, 0.9f, 0.8f, 1.2f,  0.0f, 0.5f,  1.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, { 0x1F, 0xD5, 0xF9 } },   /* cyan: idle's ring a little quicker, swelling and glowing with the voice */
+    [FACE_MODE_ALERT]  = { 10,   0.24f, 0.9f, 0.4f, 1.0f,  1.5f, 1.0f,  2.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, { 0xFF, 0xC8, 0x14 } },   /* gold: idle's ring flashing once a second */
+    [FACE_MODE_ERROR]  = { 40,   0.25f, 2.0f, 0.8f, 0.6f,  1.6f, 2.0f,  3.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, { 0xFF, 0x3C, 0x3C } },   /* red, torn by turbulence, beating twice a second, trembling, framed */
+    [FACE_MODE_SLEEP]  = { 6,    0.20f, 0.8f, 0.4f, 0.6f,  0.25f,0.2f,  1.0f, 0.0f, 0.0f, 0.10f,0.0f, 0.0f, { 0x2B, 0x57, 0xD9 } },   /* deep blue: idle's ring smaller, dimmer, slower, settled low, no haze */
 };
 
 static const uint8_t bayer4[16] = { 0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5 };
@@ -112,14 +156,26 @@ static const uint8_t inv_gamma[AURA_LEVELS + 1] = {
 /* Tables and buffers, static so the render task's stack stays small. */
 static float sin_tab[SIN_N + 1];                    /* sin(k * TAU / SIN_N) */
 static float lin_tab[257];                          /* (k/256)^2.2: display colour to linear light */
-static float haze_lin[FACE_MODE_SLEEP + 1][3];      /* AURA_HAZE * lin(col) per state, 0 without haze */
-static float border_w[HUB75_WIDTH / 2];             /* error border weight by distance from the edge */
+static aura_params_t state_params[FACE_MODE_SLEEP + 1];   /* the table above, colours as linear light */
+static float border_w[HUB75_WIDTH / 2];             /* frame weight by distance from the edge */
 static float red_lin[3], text_lin[3];
 static float shade[AURA_RES][AURA_RES][3];          /* the shader's output, linear light */
 static uint8_t text_mask[HUB75_HEIGHT][HUB75_WIDTH]; /* 2 glyph, 1 halo, 0 clear */
 static char mask_text[FACE_TEXT_MAX + 1];
 static int mask_y = -1;
 static bool inited;
+
+/* The tween: what is on the panel now, where it came from, where it is going. */
+static struct {
+    bool live;                          /* false until the first draw after a reset */
+    face_mode_t to_mode;
+    bool to_text;
+    aura_params_t from, cur, to;
+    float u, v;                            /* progress of the shape tween and of the colour fade, 0..1 */
+    int64_t last_us;
+    float anim;                         /* turbulence phase, radians, 0..TAU */
+    float pulse;                        /* pulse phase, turns, 0..1 */
+} tw;
 
 static struct {
     int64_t sum_us, max_us, last_log_us;
@@ -176,6 +232,33 @@ static inline float hash01(uint32_t n)
     return (float)(n >> 8) * (1.0f / 16777216.0f);
 }
 
+/* A random level held for `period` seconds and eased into the next one. The
+ * sequence has `count` samples and repeats, so a wall time that wraps at
+ * period * count stays continuous. */
+static float held_random(float t, float period, int count, uint32_t salt)
+{
+    float q = t / period;
+    int k = (int)q;
+    float u = q - (float)k;
+    u = u * u * (3.0f - 2.0f * u);
+    float e0 = hash01((uint32_t)(k % count + 1) * salt);       /* +1: hash01(0) is 0, index 0 must not be a forced rest */
+    float e1 = hash01((uint32_t)((k + 1) % count + 1) * salt);
+    return e0 + (e1 - e0) * u;
+}
+
+/* The voice level, 0..1: syllables (a new level every AURA_SYLLABLE_S) under
+ * a phrase loudness (a new one every AURA_PHRASE_S) gated so the quietest
+ * stretches are rests. Speech in bursts with pauses, not noise. */
+static float voice_level(float t)
+{
+    float syllable = held_random(t, AURA_SYLLABLE_S, (int)(TIME_WRAP_S / AURA_SYLLABLE_S + 0.5), 7919u);
+    float phrase = held_random(t, AURA_PHRASE_S, (int)(TIME_WRAP_S / AURA_PHRASE_S + 0.5), 104729u);
+    phrase = (phrase - 0.15f) / 0.7f;
+    if (phrase < 0.0f) phrase = 0.0f; else if (phrase > 1.0f) phrase = 1.0f;
+    phrase = phrase * phrase * (3.0f - 2.0f * phrase);
+    return syllable * phrase;
+}
+
 static inline float to_linear(float v)          /* v in 0..1 */
 {
     float a = v * 256.0f;
@@ -183,6 +266,15 @@ static inline float to_linear(float v)          /* v in 0..1 */
     if (k >= 256) return 1.0f;
     float f = a - (float)k;
     return lin_tab[k] + (lin_tab[k + 1] - lin_tab[k]) * f;
+}
+
+/* Linear light back to the display value the shader's HSV is defined on:
+ * the inverse of the 2.2 power the tables use. */
+static inline float to_display(float lin)
+{
+    if (lin <= 0.0f) return 0.0f;
+    if (lin >= 1.0f) return 1.0f;
+    return powf(lin, 1.0f / 2.2f);
 }
 
 static float srgb_to_linear(uint8_t v)
@@ -221,19 +313,120 @@ static void hsv2rgb(float h, float s, float v, float *out)
     }
 }
 
+/* The haze one state colour byte makes, as a whole number of driver levels. */
+static float haze_level(uint8_t byte)
+{
+    float v = (AURA_HAZE * srgb_to_linear(byte) - AURA_TOE) * (1.0f / (1.0f - AURA_TOE)) * (float)AURA_LEVELS;
+    return v <= 0.0f ? 0.0f : floorf(v + 0.5f);
+}
+
 static void init_tables(void)
 {
     for (int k = 0; k <= SIN_N; k++) sin_tab[k] = sinf((float)k * TAU_F / (float)SIN_N);
     for (int k = 0; k <= 256; k++) lin_tab[k] = powf((float)k / 256.0f, 2.2f);
     for (int m = 0; m <= FACE_MODE_SLEEP; m++) {
-        for (int c = 0; c < 3; c++) {
-            haze_lin[m][c] = cfgs[m].haze ? AURA_HAZE * srgb_to_linear(cfgs[m].col[c]) : 0.0f;
-        }
+        const aura_state_t *s = &states[m];
+        aura_params_t *p = &state_params[m];
+        p->speed = s->speed; p->scale = s->scale; p->amp = s->amp; p->freq = s->freq;
+        p->bright = s->bright; p->depth = s->depth; p->rate = s->rate; p->sharp = s->sharp;
+        p->voice = s->voice; p->tremor = s->tremor; p->dy = s->dy; p->haze = s->haze; p->border = s->border;
+        p->text = 0.0f;
+        p->r = srgb_to_linear(s->col[0]); p->g = srgb_to_linear(s->col[1]); p->b = srgb_to_linear(s->col[2]);
+        p->hr = haze_level(s->col[0]); p->hg = haze_level(s->col[1]); p->hb = haze_level(s->col[2]);
     }
     for (int e = 0; e < HUB75_WIDTH / 2; e++) border_w[e] = e == 0 ? 1.0f : expf(-(float)e / 2.5f) * 0.4f;
     red_lin[0] = srgb_to_linear(255); red_lin[1] = srgb_to_linear(30); red_lin[2] = srgb_to_linear(30);
     text_lin[0] = srgb_to_linear(255); text_lin[1] = srgb_to_linear(225); text_lin[2] = srgb_to_linear(180);
     inited = true;
+}
+
+/* ------------------------------------------------------------------------ */
+/* The tween                                                                 */
+/* ------------------------------------------------------------------------ */
+
+static void params_of(face_mode_t mode, bool with_text, aura_params_t *out)
+{
+    *out = state_params[mode];
+    out->text = with_text ? 1.0f : 0.0f;
+}
+
+/* out = a + (b - a) * e, field by field, except the colour and the haze,
+ * which mix at f. The colour dips a little halfway, scaled by how different
+ * the two colours are, so a blend of two saturated colours reads as one
+ * giving way to the other rather than a flash of white between them, and a
+ * change that keeps the colour does not dim. */
+static void params_mix(const aura_params_t *a, const aura_params_t *b, float e, float f, aura_params_t *out)
+{
+    const float *fa = (const float *)a, *fb = (const float *)b;
+    float *fo = (float *)out;
+    for (size_t k = 0; k < AURA_NPARAMS; k++) fo[k] = fa[k] + (fb[k] - fa[k]) * e;
+    float d = fabsf(b->r - a->r);
+    if (fabsf(b->g - a->g) > d) d = fabsf(b->g - a->g);
+    if (fabsf(b->b - a->b) > d) d = fabsf(b->b - a->b);
+    if (d > 1.0f) d = 1.0f;
+    float k = 1.0f - AURA_FADE_DIP * d * 4.0f * f * (1.0f - f);
+    out->r = (a->r + (b->r - a->r) * f) * k;
+    out->g = (a->g + (b->g - a->g) * f) * k;
+    out->b = (a->b + (b->b - a->b) * f) * k;
+    out->hr = a->hr + (b->hr - a->hr) * f;
+    out->hg = a->hg + (b->hg - a->hg) * f;
+    out->hb = a->hb + (b->hb - a->hb) * f;
+}
+
+/* Advance the tween and the phases to now_us; leaves the frame's numbers in
+ * tw.cur, the turbulence phase in tw.anim and the pulse phase in tw.pulse. */
+static void tween_step(face_mode_t mode, bool with_text, int64_t now_us)
+{
+    aura_params_t target;
+    params_of(mode, with_text, &target);
+
+    float dt = 0.0f;
+    if (!tw.live) {
+        /* Cold start: the target state with the light off, then fade in. */
+        tw.from = target;
+        tw.from.bright = 0.0f; tw.from.depth = 0.0f; tw.from.haze = 0.0f;
+        tw.from.border = 0.0f; tw.from.text = 0.0f;
+        tw.cur = tw.from;
+        tw.to = target;
+        tw.u = 0.0f;
+        tw.v = 0.0f;
+        tw.anim = 0.0f;
+        tw.pulse = 0.0f;
+        tw.live = true;
+    } else {
+        int64_t d = now_us - tw.last_us;
+        dt = d > 0 ? (float)d * 1e-6f : 0.0f;
+        if (dt > AURA_DT_MAX) dt = AURA_DT_MAX;
+        if (mode != tw.to_mode || with_text != tw.to_text) {
+            tw.from = tw.cur;                       /* restart from what is on the panel now */
+            tw.to = target;
+            tw.u = 0.0f;
+            tw.v = 0.0f;
+        }
+    }
+    tw.last_us = now_us;
+    tw.to_mode = mode;
+    tw.to_text = with_text;
+
+    if (tw.u < 1.0f || tw.v < 1.0f) {
+        tw.u += dt / AURA_TWEEN_S;
+        tw.v += dt / AURA_FADE_S;
+        if (tw.u > 1.0f) tw.u = 1.0f;
+        if (tw.v > 1.0f) tw.v = 1.0f;
+        float e = tw.u * tw.u * (3.0f - 2.0f * tw.u);   /* ease in and out */
+        float f = tw.v * tw.v * (3.0f - 2.0f * tw.v);   /* the colour, on its slower clock */
+        params_mix(&tw.from, &tw.to, e, f, &tw.cur);
+    }
+
+    /* animTime = t * 0.1 * speed * 0.5 upstream; integrated from the current
+     * pace so a speed change accelerates instead of jumping. Both phases wrap
+     * where the shader cannot tell: anim per turn (every layer uses an integer
+     * multiple of it), pulse per turn. */
+    tw.anim += dt * 0.05f * tw.cur.speed;
+    if (tw.anim >= TAU_F) tw.anim -= TAU_F;
+    if (tw.anim < 0.0f) tw.anim += TAU_F;
+    tw.pulse += dt * tw.cur.rate;
+    if (tw.pulse >= 1.0f) tw.pulse -= floorf(tw.pulse);
 }
 
 /* ------------------------------------------------------------------------ */
@@ -330,46 +523,19 @@ static inline void turb(const turb_consts_t *c, const float *ph, float amplitude
     *oy = py;
 }
 
-/* sceneAura() up to the tonemap, on the 32x32 grid, into shade[] as linear light. */
-static void render_shader(const aura_cfg_t *cfg, face_mode_t mode, float t, float anim, uint32_t frame)
+/* sceneAura() up to the tonemap, on the 32x32 grid, into shade[] as linear
+ * light. p is this frame's numbers; bright, scale, dx, dy are the per-frame
+ * values derived from them; hsv is the base colour as HSV of its display value. */
+static void render_shader(const aura_params_t *p, float bright, float scale, float dx, float dy, const float *hsv)
 {
     const float N = (float)AURA_COPIES;
-    float pulse = 0.5f + 0.5f * sinf(TAU_F * t);
-
-    float bright;
-    switch (cfg->kind) {
-    case BR_PULSE: {                                /* the hook's 0.35 s mirrored pulse, eased out */
-        float ph = t / 0.7f;
-        ph -= floorf(ph);
-        float tri = ph < 0.5f ? ph * 2.0f : 2.0f - ph * 2.0f;
-        tri = 1.0f - (1.0f - tri) * (1.0f - tri);
-        bright = cfg->b0 + (cfg->b1 - cfg->b0) * tri;
-        break;
-    }
-    case BR_FLASH:  bright = 1.0f + 1.5f * pulse * pulse; break;
-    case BR_STROBE: bright = sinf(TAU_F * 2.0f * t) > 0.0f ? 2.2f : 0.6f; break;
-    default:        bright = cfg->b0; break;
-    }
-    if (mode == FACE_MODE_SLEEP) bright *= 0.85f + 0.15f * sinf(TAU_F * t / 5.0f);
-
-    float scale = cfg->scale;
-    if (cfg->voice) {                               /* a random level every 80 ms, eased between samples */
-        float q = t / 0.08f;
-        int kk = (int)q;
-        float u = q - (float)kk;
-        u = u * u * (3.0f - 2.0f * u);
-        float e0 = hash01((uint32_t)kk * 7919u), e1 = hash01((uint32_t)(kk + 1) * 7919u);
-        scale = 0.2f + 0.2f * (e0 + (e1 - e0) * u);
-    }
 
     /* Per-copy colour: the hue drifts a little across the copies. */
     float cols[AURA_COPIES][3];
-    float h, s, v;
-    rgb2hsv((float)cfg->col[0] / 255.0f, (float)cfg->col[1] / 255.0f, (float)cfg->col[2] / 255.0f, &h, &s, &v);
     for (int i = 1; i <= AURA_COPIES; i++) {
-        float hh = h + (1.0f - (float)i / N) * AURA_COLOR_SHIFT * 0.3f;
+        float hh = hsv[0] + (1.0f - (float)i / N) * AURA_COLOR_SHIFT * 0.3f;
         hh -= floorf(hh);
-        hsv2rgb(hh, s, v, cols[i - 1]);
+        hsv2rgb(hh, hsv[1], hsv[2], cols[i - 1]);
     }
 
     /* Per-copy, per-layer sine phase: i * animTime + it, in table units.
@@ -378,18 +544,13 @@ static void render_shader(const aura_cfg_t *cfg, face_mode_t mode, float t, floa
     float ph[AURA_COPIES + 1][AURA_LAYERS];
     for (int k = 0; k <= AURA_COPIES; k++) {
         float it = k == 0 ? -1.0f / N : ((float)k / N) * spacing;
-        for (int i = 0; i < AURA_LAYERS; i++) ph[k][i] = ((float)i * anim + it) * IDX_PER_RAD;
+        for (int i = 0; i < AURA_LAYERS; i++) ph[k][i] = ((float)i * tw.anim + it) * IDX_PER_RAD;
     }
 
     turb_consts_t tc;
-    turb_consts(&tc, cfg->freq);
+    turb_consts(&tc, p->freq);
 
-    float dx = cfg->dx, dy = cfg->dy;
-    if (cfg->shake) {
-        dx += (hash01(frame * 3u) - 0.5f) * 0.06f;
-        dy += (hash01(frame * 3u + 1u) - 0.5f) * 0.06f;
-    }
-    const float amp = cfg->amp, gain = 1.2f * 4.0f / N;
+    const float amp = p->amp, gain = 1.2f * 4.0f / N;
 
     for (int j = 0; j < AURA_RES; j++) {
         float py = 0.5f - ((float)j + 0.5f) / (float)AURA_RES + dy;
@@ -445,12 +606,15 @@ static inline uint8_t quantise(float lin, float th)
     return inv_gamma[lv];
 }
 
-/* Bilinear 2x from shade[], then haze, the error border, `t`, and the quantiser. */
-static void render_panel(face_mode_t mode, float t, const uint8_t *mask)
+/* Bilinear 2x from shade[], then the haze (driver levels per channel: whole
+ * ones land flat, a fraction is dithered between two levels, so the
+ * background blends through a fade instead of switching), the frame (weight
+ * `border`, beating with the pulse `wave`), `t` at weight `text`, and the
+ * quantiser. */
+static void render_panel(const float *haze, float border, float wave, float text, const uint8_t *mask)
 {
-    const float *haze = haze_lin[mode];
-    const bool border = mode == FACE_MODE_ERROR;
-    const float border_pulse = 0.6f + 0.4f * sinf(TAU_F * 2.0f * t);
+    const float border_pulse = border * (0.4f + 0.6f * wave);
+    const float halo = 1.0f - 0.75f * text, keep = 1.0f - 0.8f * text, ink = 0.8f * text;
 
     for (int y = 0; y < HUB75_HEIGHT; y++) {
         int j = y / AURA_STEP, jo = (y & 1) ? j + 1 : j - 1;
@@ -462,19 +626,28 @@ static void render_panel(face_mode_t mode, float t, const uint8_t *mask)
             if (io < 0) io = 0;
             if (io >= AURA_RES) io = AURA_RES - 1;
             const float *a = shade[j][i];
-            float c[3];
+            float th = ((float)bayer4[(y & 3) * 4 + (x & 3)] + 0.5f) * (1.0f / 16.0f);
+            /* Red and green dither against blue's complement, so a fade between
+             * a blue haze and a red or green one swaps pixels rather than
+             * leaving half of them dark halfway. */
+            const float thc[3] = { 1.0f - th, 1.0f - th, th };
+            float c[3], hz[3];
+            for (int ch = 0; ch < 3; ch++) {
+                int l = (int)(haze[ch] + thc[ch]);
+                hz[ch] = l > 0 ? AURA_TOE + (float)l * LEVEL_LIN : 0.0f;
+            }
 #if AURA_STEP == 2
             /* Bilinear 2x: output centres sit a quarter pixel from the grid,
              * so the nearest sample weighs 9/16, its two neighbours 3/16, the diagonal 1/16. */
             const float *bx = shade[j][io], *by = shade[jo][i], *bd = shade[jo][io];
             for (int ch = 0; ch < 3; ch++) {
-                c[ch] = 0.5625f * a[ch] + 0.1875f * (bx[ch] + by[ch]) + 0.0625f * bd[ch] + haze[ch];
+                c[ch] = 0.5625f * a[ch] + 0.1875f * (bx[ch] + by[ch]) + 0.0625f * bd[ch] + hz[ch];
             }
 #else
             (void)io; (void)jo;
-            for (int ch = 0; ch < 3; ch++) c[ch] = a[ch] + haze[ch];
+            for (int ch = 0; ch < 3; ch++) c[ch] = a[ch] + hz[ch];
 #endif
-            if (border) {
+            if (border_pulse > 0.0f) {
                 int ex = x < HUB75_WIDTH - 1 - x ? x : HUB75_WIDTH - 1 - x;
                 int e = ex < ey ? ex : ey;
                 float bw = border_w[e] * border_pulse;
@@ -483,41 +656,72 @@ static void render_panel(face_mode_t mode, float t, const uint8_t *mask)
             if (mask) {
                 uint8_t mv = mask[y * HUB75_WIDTH + x];
                 if (mv == 1) {
-                    c[0] *= 0.25f; c[1] *= 0.25f; c[2] *= 0.25f;
+                    c[0] *= halo; c[1] *= halo; c[2] *= halo;
                 } else if (mv == 2) {
-                    c[0] = c[0] * 0.2f + text_lin[0] * 0.8f;
-                    c[1] = c[1] * 0.2f + text_lin[1] * 0.8f;
-                    c[2] = c[2] * 0.2f + text_lin[2] * 0.8f;
+                    c[0] = c[0] * keep + text_lin[0] * ink;
+                    c[1] = c[1] * keep + text_lin[1] * ink;
+                    c[2] = c[2] * keep + text_lin[2] * ink;
                 }
             }
-            float th = ((float)bayer4[(y & 3) * 4 + (x & 3)] + 0.5f) * (1.0f / 16.0f);
             hub75_draw_pixel(x, y, quantise(c[0], th), quantise(c[1], th), quantise(c[2], th));
         }
     }
 }
 
-void aura_draw(face_mode_t mode, int64_t now_us, uint32_t frame, const char *text, int text_y)
+void aura_reset(void)
+{
+    tw.live = false;
+}
+
+void aura_draw(face_mode_t mode, bool with_text, int64_t now_us, const char *text, int text_y)
 {
     if (!inited) init_tables();
     if ((unsigned)mode > FACE_MODE_SLEEP) mode = FACE_MODE_IDLE;
-    const aura_cfg_t *cfg = &cfgs[mode];
     int64_t t0 = esp_timer_get_time();
 
-    /* The rhythms take t modulo 70 s, which every period divides; the
-     * turbulence takes animTime = (t/2) * 0.1 * speed modulo one turn. Both
-     * stay continuous for days, where a float t would not. */
-    double td = (double)now_us * 1e-6;
-    float t = (float)fmod(td, TIME_WRAP_S);
-    float anim = (float)fmod(td * 0.05 * (double)cfg->speed, TAU_D);
+    tween_step(mode, with_text, now_us);
+    const aura_params_t *p = &tw.cur;
+
+    /* The voice and the tremor run on wall time modulo 70 s, which their
+     * periods divide, so they stay continuous for days where a float t would not. */
+    float t = (float)fmod((double)now_us * 1e-6, TIME_WRAP_S);
+
+    /* The pulse: a raised cosine, sharpened into a flash or a beat by the exponent. */
+    float wave = 0.5f - 0.5f * cosf(TAU_F * tw.pulse);
+    if (p->sharp != 1.0f) wave = powf(wave, p->sharp);
+    float bright = p->bright + p->depth * wave;
+
+    /* The voice: a level in syllables under a phrase envelope swells the ring and lifts its glow. */
+    float scale = p->scale;
+    if (p->voice > 0.0f) {
+        float level = p->voice * voice_level(t);
+        scale += AURA_VOICE * level;
+        bright += AURA_VOICE_GLOW * level;
+    }
+
+    /* The tremor: two sines per axis, 7 to 13 Hz, wander the centre. */
+    float dx = 0.0f, dy = p->dy;
+    if (p->tremor > 0.0f) {
+        float k = p->tremor * AURA_TREMOR;
+        dx += k * (0.6f * sinf(TAU_F * 7.0f * t) + 0.4f * sinf(TAU_F * 11.0f * t));
+        dy += k * (0.6f * sinf(TAU_F * 9.0f * t + 1.0f) + 0.4f * sinf(TAU_F * 13.0f * t + 2.0f));
+    }
+
+    /* The base colour is kept in linear light (that is what fades); the
+     * shader wants it as HSV to drift the hue across the copies. */
+    const float lin[3] = { p->r, p->g, p->b };
+    float hsv[3], haze[3];
+    rgb2hsv(to_display(lin[0]), to_display(lin[1]), to_display(lin[2]), &hsv[0], &hsv[1], &hsv[2]);
+    haze[0] = p->haze * p->hr; haze[1] = p->haze * p->hg; haze[2] = p->haze * p->hb;   /* driver levels */
 
     const uint8_t *mask = NULL;
-    if (text && text[0]) {
+    if (p->text > 0.0f && text && text[0]) {
         if (mask_y != text_y || strncmp(mask_text, text, FACE_TEXT_MAX) != 0) build_text_mask(text, text_y);
         mask = &text_mask[0][0];
     }
 
-    render_shader(cfg, mode, t, anim, frame);
-    render_panel(mode, t, mask);
+    render_shader(p, bright, scale, dx, dy, hsv);
+    render_panel(haze, p->border, wave, p->text, mask);
 
     int64_t dt = esp_timer_get_time() - t0;
     stats.sum_us += dt;

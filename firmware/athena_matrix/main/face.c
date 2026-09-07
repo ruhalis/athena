@@ -3,9 +3,9 @@
  * FRAME_MS and presents it.
  *
  * The eight agent states are one picture, the aura (aura.c): a circle outline
- * seen through a turbulence warp, in the state's colour and rhythm. `t` sits
- * in the centre of the ring in idle and alert. The two maintenance modes
- * (test, off) are drawn here.
+ * seen through a turbulence warp, in the state's colour and rhythm, easing
+ * from one state to the next. `t` sits in the centre of the ring in idle and
+ * alert. The two maintenance modes (test, off) are drawn here.
  */
 #include <string.h>
 
@@ -64,10 +64,17 @@ static uint32_t prng_range(uint32_t lo, uint32_t hi)    /* lo..hi inclusive */
     return lo + prng_next() % (hi - lo + 1);
 }
 
-/* One agent state as the aura; `t` only where a mode asks for it. */
-static void draw_aura(face_mode_t mode, bool with_text)
+/* Which agent states show `t`; the aura fades it in and out with the state. */
+static const bool aura_text[FACE_MODE_COUNT] = {
+    [FACE_MODE_IDLE]  = true,
+    [FACE_MODE_ALERT] = true,
+};
+
+/* One agent state as the aura; the renderer tweens from whatever it drew last. */
+static void draw_aura(uint32_t frame)
 {
-    aura_draw(mode, s.now_us, s.frame, with_text ? s.text : NULL, TEXT_Y);
+    (void)frame;
+    aura_draw(s.mode, aura_text[s.mode], s.now_us, s.text, TEXT_Y);
 }
 
 /* Wiring check: red top-left, green top-right, blue bottom-left, white
@@ -85,56 +92,8 @@ static void scene_wiring_test(void)
 }
 
 /* ------------------------------------------------------------------------ */
-/* One draw function per mode. The back buffer is already black.            */
+/* The maintenance modes. The back buffer is already black.                  */
 /* ------------------------------------------------------------------------ */
-
-static void draw_idle(uint32_t frame)
-{
-    (void)frame;
-    draw_aura(FACE_MODE_IDLE, true);
-}
-
-static void draw_listen(uint32_t frame)
-{
-    (void)frame;
-    draw_aura(FACE_MODE_LISTEN, false);
-}
-
-static void draw_think(uint32_t frame)
-{
-    (void)frame;
-    draw_aura(FACE_MODE_THINK, false);
-}
-
-static void draw_work(uint32_t frame)
-{
-    (void)frame;
-    draw_aura(FACE_MODE_WORK, false);
-}
-
-static void draw_speak(uint32_t frame)
-{
-    (void)frame;
-    draw_aura(FACE_MODE_SPEAK, false);
-}
-
-static void draw_alert(uint32_t frame)
-{
-    (void)frame;
-    draw_aura(FACE_MODE_ALERT, true);
-}
-
-static void draw_error(uint32_t frame)
-{
-    (void)frame;
-    draw_aura(FACE_MODE_ERROR, false);
-}
-
-static void draw_sleep(uint32_t frame)
-{
-    (void)frame;
-    draw_aura(FACE_MODE_SLEEP, false);
-}
 
 static void draw_test(uint32_t frame)
 {
@@ -150,14 +109,14 @@ static void draw_off(uint32_t frame)
 typedef void (*draw_fn_t)(uint32_t frame);
 
 static const draw_fn_t draw_fns[FACE_MODE_COUNT] = {
-    [FACE_MODE_IDLE]   = draw_idle,
-    [FACE_MODE_LISTEN] = draw_listen,
-    [FACE_MODE_THINK]  = draw_think,
-    [FACE_MODE_WORK]   = draw_work,
-    [FACE_MODE_SPEAK]  = draw_speak,
-    [FACE_MODE_ALERT]  = draw_alert,
-    [FACE_MODE_ERROR]  = draw_error,
-    [FACE_MODE_SLEEP]  = draw_sleep,
+    [FACE_MODE_IDLE]   = draw_aura,
+    [FACE_MODE_LISTEN] = draw_aura,
+    [FACE_MODE_THINK]  = draw_aura,
+    [FACE_MODE_WORK]   = draw_aura,
+    [FACE_MODE_SPEAK]  = draw_aura,
+    [FACE_MODE_ALERT]  = draw_aura,
+    [FACE_MODE_ERROR]  = draw_aura,
+    [FACE_MODE_SLEEP]  = draw_aura,
     [FACE_MODE_TEST]   = draw_test,
     [FACE_MODE_OFF]    = draw_off,
 };
@@ -174,6 +133,7 @@ static void set_mode(face_mode_t mode, int32_t ttl_s)
     s.blink_until_us = 0;
     s.next_blink_us = s.now_us + (int64_t)prng_range(BLINK_MIN_MS, BLINK_MAX_MS) * 1000;
     s.mouth_step_us = 0;
+    if (draw_fns[mode] != draw_aura) aura_reset();   /* the next aura fades in from dark */
     hub75_set_output(mode != FACE_MODE_OFF);
     ESP_LOGI(TAG, "mode %s ttl %ld", face_mode_name(mode), (long)ttl_s);
 }
