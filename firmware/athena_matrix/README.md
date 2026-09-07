@@ -185,6 +185,10 @@ the colour and the haze behind the ring fade more slowly over 2 s, and `t` fades
 | ESP32 resets when the panel goes bright | supply sag or a missing common ground |
 | `Resource busy` on the port | another monitor holds it; close it |
 
+## Preview on the Mac
+
+`host/` compiles the real `main/aura.c` with clang against stubs for the ESP-IDF headers and the hub75 driver, so a change to the renderer is looked at before any firmware build and without a board. `python3 host/sheet.py all` writes contact sheets of what the panel would show (5-bit levels, dithered) for every state, the colour fades and a whole session into `host/out/`, and prints how much each frame moved. `node host/parity.mjs` checks that `aura.c` and `reference/aurora.js` draw the same frames. `node host/sheet.mjs` is the same sheet from the JS alone. `python3 host/bench/make_bench.py --out <file>` rebuilds the live bench page from `aurora.js`. `host/README.md` has the details and what the numbers mean.
+
 ## Design notes
 
 - `components/hub75/` is the driver. `hub75_init()` validates the pins, builds

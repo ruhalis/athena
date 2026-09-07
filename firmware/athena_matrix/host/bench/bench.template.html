@@ -1,0 +1,282 @@
+<title>Athena Aura Bench</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root {
+  color-scheme: light;
+  --bg: #eef1f6;
+  --surface: #ffffff;
+  --surface-2: #e4e8ef;
+  --line: #d3d9e3;
+  --text: #1b2130;
+  --muted: #5d6675;
+  --accent: #0aa7c9;
+  --bezel: #0f1217;
+  --bezel-edge: #2a2f38;
+  --sans: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: "IBM Plex Mono", "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --bg: #0c0f15;
+    --surface: #141821;
+    --surface-2: #1c2130;
+    --line: #262d3b;
+    --text: #dbe0ea;
+    --muted: #8b94a6;
+    --accent: #1fd5f9;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0c0f15;
+  --surface: #141821;
+  --surface-2: #1c2130;
+  --line: #262d3b;
+  --text: #dbe0ea;
+  --muted: #8b94a6;
+  --accent: #1fd5f9;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+.wrap { max-width: 1120px; margin: 0 auto; padding: 28px 24px 48px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 20px; margin-bottom: 20px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; letter-spacing: -0.01em; }
+header p { margin: 0; color: var(--muted); max-width: 62ch; }
+.grid { display: grid; grid-template-columns: minmax(280px, 520px) minmax(280px, 1fr); gap: 24px; align-items: start; }
+@media (max-width: 760px) { .grid { grid-template-columns: 1fr; } }
+
+/* The panel: a physical object, the same in both themes. */
+.stage { display: flex; flex-direction: column; gap: 12px; }
+.bezel {
+  background: var(--bezel);
+  border: 1px solid var(--bezel-edge);
+  border-radius: 6px;
+  padding: 10px;
+}
+.leds { position: relative; aspect-ratio: 1; }
+canvas { display: block; width: 100%; height: 100%; background: #000; image-rendering: pixelated; }
+/* The LEDs: one round window per pixel, 74 % of the pitch, painted by CSS so no per-LED drawing happens. */
+.leds::after { content: ""; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(circle closest-side, transparent 0 74%, #000 80%); background-size: 1.5625% 1.5625%; }
+.wire { font: 13px/1.6 var(--mono); color: var(--muted); display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; }
+.wire b { font-weight: 500; color: var(--text); }
+.wire .ok { color: #3c9a5f; }
+.tween { height: 3px; background: var(--surface-2); border-radius: 2px; overflow: hidden; }
+.tween i { display: block; height: 100%; width: 0; background: var(--accent); transition: none; }
+.meta { display: flex; flex-wrap: wrap; gap: 4px 18px; font: 12px/1.5 var(--mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+
+/* The states. */
+.states { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin: 0; padding: 0; list-style: none; }
+@media (max-width: 420px) { .states { grid-template-columns: 1fr; } }
+.state {
+  display: grid; grid-template-columns: 14px 1fr auto; align-items: center; gap: 10px;
+  width: 100%; text-align: left; padding: 9px 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 6px;
+  color: var(--text); font: inherit; cursor: pointer;
+}
+.state:hover { background: var(--surface-2); }
+.state:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.state[aria-pressed="true"] { border-color: var(--sw); box-shadow: inset 0 0 0 1px var(--sw); }
+.state .sw { width: 14px; height: 14px; border-radius: 50%; background: var(--sw); }
+.state .name { font-weight: 500; font-family: var(--mono); font-size: 14px; }
+.state .look { display: block; font-size: 12px; color: var(--muted); font-family: var(--sans); font-weight: 400; }
+.state .key { font: 12px var(--mono); color: var(--muted); }
+h2 { font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); margin: 22px 0 8px; }
+.controls { display: grid; grid-template-columns: auto 1fr; gap: 10px 14px; align-items: center; font-size: 14px; }
+.controls label { color: var(--muted); }
+.controls input[type="text"] { font: 14px var(--mono); padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--text); width: 9ch; }
+.controls input[type="range"] { width: 100%; accent-color: var(--accent); }
+.controls .val { font: 13px var(--mono); color: var(--text); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+.seg button { font: 13px var(--mono); padding: 4px 10px; background: var(--surface); color: var(--muted); border: 0; cursor: pointer; }
+.seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.demo { font: 500 14px var(--sans); padding: 8px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface); color: var(--text); cursor: pointer; }
+.demo[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #05161c; }
+.demo:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.numbers { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 6px 14px; font: 13px/1.5 var(--mono); font-variant-numeric: tabular-nums; }
+.numbers div { display: flex; justify-content: space-between; border-bottom: 1px solid var(--line); padding-bottom: 2px; }
+.numbers span:first-child { color: var(--muted); }
+.note { color: var(--muted); font-size: 13px; margin: 8px 0 0; max-width: 62ch; }
+.note code { font: 12.5px var(--mono); }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>Athena Aura Bench</h1>
+    <p>The 64 × 64 P3 panel as the firmware draws it: 5-bit colour with a Bayer dither, 40 fps, the board's shader (12 copies on a 32 × 32 grid, 3 turbulence layers, upscaled). Pick a state and the ring eases there in 0.8 s, the way <code>aura.c</code> does.</p>
+  </header>
+
+  <div class="grid">
+    <section class="stage" aria-label="Panel">
+      <div class="bezel"><div class="leds"><canvas id="panel" width="512" height="512" aria-label="LED panel"></canvas></div></div>
+      <div class="tween" aria-hidden="true"><i id="tweenbar"></i></div>
+      <div class="wire">
+        <span>Mac →</span><b id="wire">{"mode":"idle","t":"14:32"}</b>
+        <span>board →</span><span class="ok">ok</span>
+      </div>
+      <div class="meta">
+        <span id="m-mode">idle · sticky</span>
+        <span id="m-since">since 0.0 s</span>
+        <span id="m-draw">draw – ms</span>
+      </div>
+    </section>
+
+    <section aria-label="Controls">
+      <h2 style="margin-top:0">State</h2>
+      <ul class="states" id="states"></ul>
+
+      <h2>Session</h2>
+      <button class="demo" id="demo" aria-pressed="false">Play a session</button>
+      <p class="note">Walks the states a real Hermes turn produces: listen → think → work → think → speak → idle, then an alert, an error, and sleep. Keys 1–8 pick a state, D plays or stops.</p>
+
+      <h2>Board</h2>
+      <div class="controls">
+        <label for="text"><code>t</code></label>
+        <div><input id="text" type="text" maxlength="8" value="14:32" spellcheck="false"> <span class="val">the Mac's clock, shown by idle and alert</span></div>
+        <label for="tween">tween</label>
+        <div><input id="tween" type="range" min="0.2" max="2" step="0.1" value="0.8"> <span class="val" id="tween-val">0.8 s</span></div>
+        <label for="fade">colour fade</label>
+        <div><input id="fade" type="range" min="0.5" max="4" step="0.1" value="2"> <span class="val" id="fade-val">2.0 s</span></div>
+        <label>shader</label>
+        <div class="seg" role="group" aria-label="Shader shape">
+          <button id="it12" aria-pressed="true">board · 12 copies, 32 grid</button>
+          <button id="it36" aria-pressed="false">LiveKit · 36 copies, 64 grid</button>
+        </div>
+      </div>
+
+      <h2>Live numbers</h2>
+      <div class="numbers" id="numbers"></div>
+      <p class="note">The tweened row of the <code>AURA</code> table in <code>reference/aurora.js</code>, which <code>aura.c</code> mirrors field for field. Colour is linear-light RGB, fading on its own slower clock.</p>
+    </section>
+  </div>
+</div>
+
+<script>
+/* @@AURORA_JS@@  make_bench.py replaces this line with reference/aurora.js; the page needs window.Aurora from it. */
+</script>
+<script>
+(function () {
+  'use strict';
+  var A = window.Aurora;
+  var STATES = A.STATES, TAU = Math.PI * 2;
+  var TTL = { idle: 0, listen: 30, think: 120, work: 300, speak: 8, alert: 0, error: 10, sleep: 0 };
+  var LOOK = {
+    idle: 'cyan, breathing through the turbulence',
+    listen: 'mint, larger, a quick shallow pulse',
+    think: 'azure, swirling faster, a slow deep swell',
+    work: 'ice, turning fast, steady',
+    speak: 'cyan, swelling and glowing with the voice',
+    alert: 'gold, idle’s ring flashing once a second',
+    error: 'red, torn, beating, trembling, framed',
+    sleep: 'deep blue, smaller, dimmer, settled low'
+  };
+  var SESSION = [['idle', 2.5], ['listen', 2], ['think', 3], ['work', 4], ['think', 2], ['speak', 4], ['idle', 3],
+                 ['alert', 4], ['idle', 2], ['error', 3], ['idle', 3], ['sleep', 5]];
+  var FIELDS = ['speed', 'scale', 'amp', 'freq', 'bright', 'depth', 'rate', 'sharp', 'voice', 'tremor', 'dy', 'haze', 'border', 'text', 'r', 'g', 'b', 'hr', 'hg', 'hb'];
+
+  var W = A.W, H = A.H;
+  var canvas = document.getElementById('panel'), ctx = canvas.getContext('2d');
+  var small = document.createElement('canvas'); small.width = W; small.height = H;
+  var sctx = small.getContext('2d'), img = sctx.createImageData(W, H);
+
+  /* The tween, exactly as aura.c: the numbers on screen, where they came
+   * from, where they go; phases integrated from the current pace. */
+  var mode = 'idle', text = '14:32', tweenS = 0.8, fadeS = 2.0, iters = 12, grid = 32, layers = 3;   /* the board's shader shape, as aura.c's AURA_COPIES, AURA_RES, AURA_LAYERS */
+  var to = A.auraParams(mode, true), from = A.auraDark(to), cur = from, u = 0, v = 0;
+  var anim = 0, pulse = 0, lastMs = performance.now(), sinceMs = lastMs, t0 = lastMs;
+  var drawSum = 0, drawN = 0, drawShown = '–';
+  var demo = false, demoIdx = 0, demoUntil = 0;
+
+  function withText(m) { return m === 'idle' || m === 'alert'; }
+  function setMode(m, now) {
+    if (m === mode) return;
+    from = cur; to = A.auraParams(m, withText(m)); u = 0; v = 0; mode = m; sinceMs = now || performance.now();
+    STATES.forEach(function (s) { document.getElementById('st-' + s).setAttribute('aria-pressed', s === mode ? 'true' : 'false'); });
+    var line = { mode: m }; if (withText(m) && text) line.t = text;
+    document.getElementById('wire').textContent = JSON.stringify(line);
+    document.getElementById('m-mode').textContent = m + ' · ' + (TTL[m] ? 'ttl ' + TTL[m] + ' s' : 'sticky');
+  }
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    if (now - lastMs < 24) return;                     /* the board draws every 25 ms */
+    var dt = Math.min((now - lastMs) / 1000, 0.1); lastMs = now;
+
+    if (demo && now >= demoUntil) {
+      var step = SESSION[demoIdx % SESSION.length]; demoIdx++;
+      setMode(step[0], now); demoUntil = now + step[1] * 1000;
+    }
+    if (u < 1 || v < 1) { u = Math.min(1, u + dt / tweenS); v = Math.min(1, v + dt / fadeS); cur = A.auraMix(from, to, A.auraEase(u), A.auraEase(v)); }
+    anim = (anim + dt * 0.05 * cur.speed) % TAU;
+    pulse = (pulse + dt * cur.rate) % 1;
+    var t = ((now - t0) / 1000) % 70;
+
+    var d0 = performance.now();
+    var px = A.render(mode, t, { params: cur, phases: { anim: anim, pulse: pulse }, text: text, iterations: iters, grid: grid, layers: layers });
+    var d = img.data;
+    for (var i = 0, j = 0; i < px.length; i += 3, j += 4) { d[j] = px[i]; d[j + 1] = px[i + 1]; d[j + 2] = px[i + 2]; d[j + 3] = 255; }
+    sctx.putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(small, 0, 0, canvas.width, canvas.height);
+    drawSum += performance.now() - d0; drawN++;
+
+    document.getElementById('tweenbar').style.width = (u * 100) + '%';
+    document.getElementById('m-since').textContent = 'since ' + ((now - sinceMs) / 1000).toFixed(1) + ' s';
+    if (drawN >= 20) { drawShown = (drawSum / drawN).toFixed(1); drawSum = 0; drawN = 0; document.getElementById('m-draw').textContent = 'draw ' + drawShown + ' ms'; }
+    var cells = numbers.children;
+    for (var k = 0; k < FIELDS.length; k++) cells[k].lastChild.textContent = fmt(FIELDS[k], cur[FIELDS[k]]);
+  }
+  function fmt(k, v) { return k === 'speed' ? v.toFixed(1) : v.toFixed(3); }
+
+  /* Build the state list and the numbers grid. */
+  var list = document.getElementById('states');
+  STATES.forEach(function (s, i) {
+    var c = A.AURA_COL[s], li = document.createElement('li'), b = document.createElement('button');
+    b.className = 'state'; b.id = 'st-' + s; b.type = 'button';
+    b.style.setProperty('--sw', 'rgb(' + c[0] + ',' + c[1] + ',' + c[2] + ')');
+    b.setAttribute('aria-pressed', s === mode ? 'true' : 'false');
+    b.innerHTML = '<span class="sw"></span><span class="name">' + s + '<span class="look">' + LOOK[s] + '</span></span><span class="key">' + (i + 1) + '</span>';
+    b.addEventListener('click', function () { stopDemo(); setMode(s); });
+    li.appendChild(b); list.appendChild(li);
+  });
+  var numbers = document.getElementById('numbers');
+  FIELDS.forEach(function (k) { var d = document.createElement('div'); d.innerHTML = '<span>' + k + '</span><span></span>'; numbers.appendChild(d); });
+
+  /* Controls. */
+  var demoBtn = document.getElementById('demo');
+  function startDemo() { demo = true; demoIdx = 0; demoUntil = 0; demoBtn.setAttribute('aria-pressed', 'true'); demoBtn.textContent = 'Stop the session'; }
+  function stopDemo() { if (!demo) return; demo = false; demoBtn.setAttribute('aria-pressed', 'false'); demoBtn.textContent = 'Play a session'; }
+  demoBtn.addEventListener('click', function () { demo ? stopDemo() : startDemo(); });
+
+  var textIn = document.getElementById('text');
+  textIn.addEventListener('input', function () { text = textIn.value.slice(0, 8); if (withText(mode)) { var line = { mode: mode }; if (text) line.t = text; document.getElementById('wire').textContent = JSON.stringify(line); } });
+  var clock = new Date(); textIn.value = text = String(clock.getHours()).padStart(2, '0') + ':' + String(clock.getMinutes()).padStart(2, '0');
+  document.getElementById('wire').textContent = JSON.stringify({ mode: 'idle', t: text });
+
+  var tweenIn = document.getElementById('tween');
+  tweenIn.addEventListener('input', function () { tweenS = parseFloat(tweenIn.value); document.getElementById('tween-val').textContent = tweenS.toFixed(1) + ' s'; });
+  var fadeIn = document.getElementById('fade');
+  fadeIn.addEventListener('input', function () { fadeS = parseFloat(fadeIn.value); document.getElementById('fade-val').textContent = fadeS.toFixed(1) + ' s'; });
+  var it12 = document.getElementById('it12'), it36 = document.getElementById('it36');
+  function setIters(n) { iters = n; grid = n === 12 ? 32 : 64; layers = n === 12 ? 3 : 4; it12.setAttribute('aria-pressed', n === 12 ? 'true' : 'false'); it36.setAttribute('aria-pressed', n === 36 ? 'true' : 'false'); }
+  it12.addEventListener('click', function () { setIters(12); });
+  it36.addEventListener('click', function () { setIters(36); });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.target === textIn) return;
+    var n = parseInt(e.key, 10);
+    if (n >= 1 && n <= 8) { stopDemo(); setMode(STATES[n - 1]); }
+    else if (e.key === 'd' || e.key === 'D') { demo ? stopDemo() : startDemo(); }
+  });
+
+  requestAnimationFrame(frame);
+})();
+</script>

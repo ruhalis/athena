@@ -27,6 +27,16 @@
   function smooth(e0, e1, x) { var t = clamp01((x - e0) / (e1 - e0)); return t * t * (3 - 2 * t); }
   function frac(v) { return v - Math.floor(v); }
   function hash(n) { var x = Math.sin(n * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); }
+  /* Integer hash to [0, 1), bit for bit aura.c's hash01(): the voice runs on
+   * it so the bench plays the board's sequence. hash() above is the sin-based
+   * one the other looks use; it is noise in float, so the C never had it. */
+  function hash01(n) {
+    n = n >>> 0;
+    n ^= n >>> 16; n = Math.imul(n, 0x7feb352d) >>> 0;
+    n ^= n >>> 15; n = Math.imul(n, 0x846ca68b) >>> 0;
+    n ^= n >>> 16;
+    return (n >>> 8) / 16777216;
+  }
 
   /* Palettes: the cloud's outer colour (thin gas) and its core (dense light). */
   var PAL = {
@@ -587,13 +597,13 @@
   /* The phases a fixed state has at time t; a live caller integrates them instead. */
   function auraPhases(p, t) { return { anim: frac(t * 0.05 * p.speed / TAU) * TAU, pulse: frac(t * p.rate) }; }
 
-  /* turb(): the shader's turbulence warp, four layers of rotated sine
-   * displacement. pos in the shader's frame (-0.5..0.5); anim is the
-   * turbulence phase in radians (animTime upstream). */
-  function auraTurb(px, py, anim, it, freq, amp, out) {
+  /* turb(): the shader's turbulence warp, `layers` layers (4 upstream, 3 on
+   * the board) of rotated sine displacement. pos in the shader's frame
+   * (-0.5..0.5); anim is the turbulence phase in radians (animTime upstream). */
+  function auraTurb(px, py, anim, it, freq, amp, layers, out) {
     var m00 = 0.6, m10 = -0.25, m01 = 0.25, m11 = 0.9;       /* rotation, column-major like GLSL */
     var frequency = 2 + 13 * freq, amplitude = amp;
-    for (var i = 0; i < 4; i++) {
+    for (var i = 0; i < layers; i++) {
       var rx = px * m00 + py * m10, ry = px * m01 + py * m11;
       var wx = Math.sin(frequency * rx + i * anim + it), wy = Math.sin(frequency * ry + i * anim + it);
       var k = amplitude / frequency;
@@ -613,7 +623,8 @@
    * sequence repeats every AURA_WRAP_S so a wrapped clock stays continuous. */
   function heldRandom(t, period, salt) {
     var count = Math.round(AURA_WRAP_S / period), k = Math.floor(t / period), u = smooth(0, 1, frac(t / period));
-    var e0 = hash((k % count + 1) * salt), e1 = hash(((k + 1) % count + 1) * salt);   /* +1 as in aura.c, whose hash of 0 is 0 */
+    /* +1 as in aura.c: hash01(0) is 0 and index 0 must not be a forced rest; the index times the salt wraps at 32 bits as the C's uint32_t does. */
+    var e0 = hash01(Math.imul(k % count + 1, salt)), e1 = hash01(Math.imul((k + 1) % count + 1, salt));
     return e0 + (e1 - e0) * u;
   }
 
@@ -660,13 +671,20 @@
     var spacing = 1 + (TAU - 1) * AURA_SPACING, anim = phases.anim;
     var st = [0, 0], prev = [0, 0];
 
-    for (y = 0; y < H; y++) {
-      for (x = 0; x < W; x++) {
-        var cx = (x + 0.5) / W - 0.5 + dx, cy = 0.5 - (y + 0.5) / H + dy;
-        auraTurb(cx, cy, anim, -1 / N, p.freq, p.amp, prev);
+    /* The shader runs on a G x G grid with L turbulence layers: G = W and
+     * L = 4 is the shader as written (the default); G = W / 2 and L = 3 is
+     * the board (aura.c's AURA_RES and AURA_LAYERS), upscaled bilinearly in
+     * the panel pass below exactly as render_panel() does it. */
+    var G = opts.grid || W, L = opts.layers || 4, gx, gy;
+    if (G !== W && G * 2 !== W) throw new Error('aurora: grid must be ' + W + ' or ' + (W / 2));
+    var shade = new Float64Array(G * G * 3);           /* linear light on the grid */
+    for (gy = 0; gy < G; gy++) {
+      for (gx = 0; gx < G; gx++) {
+        var cx = (gx + 0.5) / G - 0.5 + dx, cy = 0.5 - (gy + 0.5) / G + dy;
+        auraTurb(cx, cy, anim, -1 / N, p.freq, p.amp, L, prev);
         var ppr = 0, ppg = 0, ppb = 0;
         for (i = 1; i <= N; i++) {
-          auraTurb(cx, cy, anim, (i / N) * spacing, p.freq, p.amp, st);
+          auraTurb(cx, cy, anim, (i / N) * spacing, p.freq, p.amp, L, st);
           var d = Math.abs(Math.sqrt(st[0] * st[0] + st[1] * st[1]) - scale);
           var ddx = st[0] - prev[0], ddy = st[1] - prev[1], pd = Math.sqrt(ddx * ddx + ddy * ddy);
           prev[0] = st[0]; prev[1] = st[1];
@@ -681,11 +699,33 @@
         r = r / (1 + r) * bright; g = g / (1 + g) * bright; b = b / (1 + b) * bright;
         r = clamp01(r); g = clamp01(g); b = clamp01(b);
         /* The shader's output is display colour; the panel wants linear light. */
+        k = (gy * G + gx) * 3;
+        shade[k] = Math.pow(r, 2.2); shade[k + 1] = Math.pow(g, 2.2); shade[k + 2] = Math.pow(b, 2.2);
+      }
+    }
+
+    /* The panel pass: upscale if the grid is smaller, then the haze, the frame and `t` at full resolution. */
+    for (y = 0; y < H; y++) {
+      for (x = 0; x < W; x++) {
         var th = (BAYER4[(y & 3) * 4 + (x & 3)] + 0.5) / 16;
         var h0 = Math.floor(hazeLv[0] + 1 - th), h1 = Math.floor(hazeLv[1] + 1 - th), h2 = Math.floor(hazeLv[2] + th);   /* red and green against blue's complement, as aura.c */
-        var lr = Math.pow(r, 2.2) + (h0 > 0 ? 0.006 + h0 * LEVEL_LIN : 0);
-        var lg = Math.pow(g, 2.2) + (h1 > 0 ? 0.006 + h1 * LEVEL_LIN : 0);
-        var lb = Math.pow(b, 2.2) + (h2 > 0 ? 0.006 + h2 * LEVEL_LIN : 0);
+        var lr, lg, lb;
+        if (G === W) {
+          k = (y * W + x) * 3;
+          lr = shade[k]; lg = shade[k + 1]; lb = shade[k + 2];
+        } else {
+          /* Bilinear 2x as aura.c: output centres sit a quarter pixel from the
+           * grid, so the nearest sample weighs 9/16, its two neighbours 3/16, the diagonal 1/16. */
+          var gj = y >> 1, gjo = (y & 1) ? gj + 1 : gj - 1, gi = x >> 1, gio = (x & 1) ? gi + 1 : gi - 1;
+          if (gjo < 0) gjo = 0; if (gjo >= G) gjo = G - 1; if (gio < 0) gio = 0; if (gio >= G) gio = G - 1;
+          var sa = (gj * G + gi) * 3, sx = (gj * G + gio) * 3, sy = (gjo * G + gi) * 3, sd = (gjo * G + gio) * 3;
+          lr = 0.5625 * shade[sa] + 0.1875 * (shade[sx] + shade[sy]) + 0.0625 * shade[sd];
+          lg = 0.5625 * shade[sa + 1] + 0.1875 * (shade[sx + 1] + shade[sy + 1]) + 0.0625 * shade[sd + 1];
+          lb = 0.5625 * shade[sa + 2] + 0.1875 * (shade[sx + 2] + shade[sy + 2]) + 0.0625 * shade[sd + 2];
+        }
+        lr += (h0 > 0 ? 0.006 + h0 * LEVEL_LIN : 0);
+        lg += (h1 > 0 ? 0.006 + h1 * LEVEL_LIN : 0);
+        lb += (h2 > 0 ? 0.006 + h2 * LEVEL_LIN : 0);
 
         if (borderPulse > 0) {
           var e = Math.min(x, y, 63 - x, 63 - y);
@@ -717,8 +757,9 @@
   }
 
   /* Render one frame. opts: look ('aura' | 'nebula' | 'ring' | 'cloud'), bits (5), dither
-   * (true | 'temporal' | false), text ('14:32'), iterations (36),
-   * frame (temporal dither phase), stats ({duty, frames}). For the aura:
+   * (true | 'temporal' | false), text ('14:32'), iterations (36), grid (64;
+   * 32 is the board), layers (4; 3 is the board), frame (temporal dither
+   * phase), stats ({duty, frames}). For the aura:
    * params (an auraParams() or auraMix() result, default the mode's own) and
    * phases ({anim, pulse}, default the fixed state's at t) let a live caller
    * render a tween between states with integrated phases. */
