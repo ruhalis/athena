@@ -703,7 +703,13 @@
         var mv = tmask[i];
         if (!mv) continue;
         var j = i * 3;
-        if (mv === 1) { acc[j] *= halo; acc[j + 1] *= halo; acc[j + 2] *= halo; }
+        if (mv === 1) {
+          /* Dim toward the haze floor, not toward black, as aura.c: the halo never goes darker than the background. */
+          var hx = i % W, hy = (i - hx) / W, hth = (BAYER4[(hy & 3) * 4 + (hx & 3)] + 0.5) / 16;
+          var g0 = Math.floor(hazeLv[0] + 1 - hth), g1 = Math.floor(hazeLv[1] + 1 - hth), g2 = Math.floor(hazeLv[2] + hth);
+          var f0 = g0 > 0 ? 0.006 + g0 * LEVEL_LIN : 0, f1 = g1 > 0 ? 0.006 + g1 * LEVEL_LIN : 0, f2 = g2 > 0 ? 0.006 + g2 * LEVEL_LIN : 0;
+          acc[j] = f0 + (acc[j] - f0) * halo; acc[j + 1] = f1 + (acc[j + 1] - f1) * halo; acc[j + 2] = f2 + (acc[j + 2] - f2) * halo;
+        }
         else { acc[j] = acc[j] * keep + TEXT_COL[0] * ink; acc[j + 1] = acc[j + 1] * keep + TEXT_COL[1] * ink; acc[j + 2] = acc[j + 2] * keep + TEXT_COL[2] * ink; }
       }
     }

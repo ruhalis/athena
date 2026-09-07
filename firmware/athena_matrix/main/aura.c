@@ -609,8 +609,8 @@ static inline uint8_t quantise(float lin, float th)
 /* Bilinear 2x from shade[], then the haze (driver levels per channel: whole
  * ones land flat, a fraction is dithered between two levels, so the
  * background blends through a fade instead of switching), the frame (weight
- * `border`, beating with the pulse `wave`), `t` at weight `text`, and the
- * quantiser. */
+ * `border`, beating with the pulse `wave`), `t` at weight `text` (its halo
+ * dims what sits above the haze, never the haze itself), and the quantiser. */
 static void render_panel(const float *haze, float border, float wave, float text, const uint8_t *mask)
 {
     const float border_pulse = border * (0.4f + 0.6f * wave);
@@ -656,7 +656,12 @@ static void render_panel(const float *haze, float border, float wave, float text
             if (mask) {
                 uint8_t mv = mask[y * HUB75_WIDTH + x];
                 if (mv == 1) {
-                    c[0] *= halo; c[1] *= halo; c[2] *= halo;
+                    /* Dim toward the haze, not toward black: the halo never
+                     * goes darker than the background around it, so it does
+                     * not punch a black hole where the haze is a level or two. */
+                    c[0] = hz[0] + (c[0] - hz[0]) * halo;
+                    c[1] = hz[1] + (c[1] - hz[1]) * halo;
+                    c[2] = hz[2] + (c[2] - hz[2]) * halo;
                 } else if (mv == 2) {
                     c[0] = c[0] * keep + text_lin[0] * ink;
                     c[1] = c[1] * keep + text_lin[1] * ink;
