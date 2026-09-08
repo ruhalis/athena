@@ -2,8 +2,8 @@
 
 Companion to `RGB-MATRIX.md`. The matrix board is Athena's face; this board is
 its ears and mouth. Both are ESP32-S3 boards in one enclosure. This one dials the
-Mac hub (`athena.py`) over WebSocket; the matrix is wired over USB serial for
-now. The Mac does STT, the Hermes turn, and
+Mac hub (`athena.py`) over WebSocket; the matrix listens on Wi-Fi
+(`athena-matrix.local:7075`, USB serial as the fallback). The Mac does STT, the Hermes turn, and
 TTS; this board does wake word, echo cancellation, capture, and playback.
 
 Status: design note. Nothing in `firmware/athena_audio/` exists yet. The
@@ -184,7 +184,8 @@ State machine on the board:
 | SPEAK | downlink PCM | `play_end`; wake word during SPEAK → flush TX ring, send `interrupt`, go LISTEN |
 
 The hub fans every state change out to the matrix board as its existing
-`{"mode": ...}` message, so the face reacts without the two boards talking.
+`{"mode": ...}` line on the matrix's TCP port (one more client next to the
+`athena-face` plugin), so the face reacts without the two boards talking.
 
 ## Stages, each with a checkpoint
 

@@ -1,17 +1,18 @@
 # RGB Matrix Display for Athena
 
-Waveshare **RGB-Matrix-P3 64×64** (HUB75E) driven by an **ESP32-S3-DevKitC-1** over a **USB cable** from the Mac. The Mac writes one JSON line per state change to the board's serial port; the board renders. No Wi-Fi, no WebSocket, no credentials: plug in two cables and it works. Wi-Fi is a later step (see the end of this file).
+Waveshare **RGB-Matrix-P3 64×64** (HUB75E) driven by an **ESP32-S3-DevKitC-1** that the Mac reaches over **Wi-Fi** (`athena-matrix.local`, TCP port 7075) or, with a cable, over **USB serial**. Either way the Mac writes one JSON line per state change and the board renders. Wi-Fi needs the network's name and password in a gitignored header (see "Wi-Fi" at the end of this file); the cable needs nothing and stays as the fallback and the boot console.
 
-Status: design for the S3 build. `firmware/athena_matrix/` currently holds a **bit-banged prototype** with its own `hub75` component; it builds for the WROOM-32 with its own pin map and for the ESP32-S3 with the pin map below (see `firmware/athena_matrix/README.md`). The driver submodule is declared in `.gitmodules` but not checked out. The serial protocol below is implemented in that prototype (`main/serial.c`, `main/face.c`, `main/protocol.h`) and runs on both targets.
+Status: design for the S3 build. `firmware/athena_matrix/` currently holds a **bit-banged prototype** with its own `hub75` component; it builds for the WROOM-32 with its own pin map and for the ESP32-S3 with the pin map below (see `firmware/athena_matrix/README.md`). The driver submodule is declared in `.gitmodules` but not checked out. The protocol below is implemented in that prototype (`main/command.c` assembles and validates lines, `main/serial.c` and `main/net.c` are the two transports, `main/face.c` renders, `main/protocol.h` names the states) and runs on both targets; Wi-Fi and mDNS come from the shared `firmware/components/athena_common/`.
 
 ## Architecture
 
 ```
-athena-face plugin / scripts/face.py  →  USB (UART bridge, 115200, one JSON per line)  →  ESP32  →  16-pin HUB75E ribbon  →  panel
-                                                                                  5 V / 4 A PSU     →  panel
+athena-face plugin / scripts/face.py  →  Wi-Fi (TCP to athena-matrix.local:7075, one JSON per line)  →  ESP32  →  16-pin HUB75E ribbon  →  panel
+                                      →  or USB (UART bridge, 115200, the same lines)                 →
+                                                                                             5 V / 4 A PSU  →  panel
 ```
 
-Two cables reach the DevKit (USB to the Mac, ribbon to the panel) and one reaches the panel (its own 5 V supply). The DevKit's USB cable is both its power and the command channel.
+Two cables reach the DevKit (USB for power, ribbon to the panel) and one reaches the panel (its own 5 V supply). Commands arrive over Wi-Fi; the USB cable is power, the boot console, the flashing path, and the fallback command channel when the network is down.
 
 ## Parts
 
@@ -84,7 +85,7 @@ The panel's input buffers are 5 V parts, and the ESP32 drives 3.3 V. That works 
 
 ## Firmware (ESP-IDF, `firmware/athena_matrix/`)
 
-Toolchain: **pure ESP-IDF** at the tag pinned by the global Claude Code `esp-idf` skill (`~/.claude/skills/esp-idf/idf-version`). No Arduino, no PlatformIO. How to build, flash, and watch it is that skill; Mac toolchain setup is `setup-macos.md` next to it; Athena-specific layout is in `CLAUDE.md`. This board needs **no secrets header**: nothing to join, nothing to authenticate.
+Toolchain: **pure ESP-IDF** at the tag pinned by the global Claude Code `esp-idf` skill (`~/.claude/skills/esp-idf/idf-version`). No Arduino, no PlatformIO. How to build, flash, and watch it is that skill; Mac toolchain setup is `setup-macos.md` next to it; Athena-specific layout is in `CLAUDE.md`. The Wi-Fi name and password come from `firmware/components/athena_common/include/athena_secrets.h` (gitignored; copy the `.example` next to it); without it the build stops with a clear `#error`.
 
 HUB75 driver: `ESP32-HUB75-MatrixPanel-I2S-DMA` (mrcodetastic) as a git submodule at `firmware/athena_matrix/components/ESP32-HUB75-MatrixPanel-I2S-DMA`; that directory name is what its CMake expects. With `CONFIG_ESP32_HUB75_USE_GFX=n` it needs only `esp_lcd` and `driver` and drives the panel from the S3's LCD_CAM peripheral over GDMA; `examples/esp-idf/without-gfx` inside the submodule is the reference (its `main/CMakeLists.txt` lists the component under `REQUIRES`). Leave the PSRAM framebuffer option off. The API is a C++ class, so keep it behind one `.cpp` wrapper that exposes `extern "C"` functions; the rest of the firmware is C.
 
@@ -105,9 +106,9 @@ panel.clearScreen();
 
 Drawing without GFX: `drawPixelRGB888(x, y, r, g, b)`, `fillRect(x, y, w, h, r, g, b)`, `fillScreenRGB888(r, g, b)`, `clearScreen()`. There are no text primitives, so the clock digits come from a small bitmap font drawn pixel by pixel. A few dozen lines, not a library.
 
-Serial input: the DevKit's UART connector is a CP2102N bridge on **UART0** (GPIO43/44), the same UART the log console uses, so no extra pins. Install the UART driver on UART0 at 115200 8N1, read it line by line, parse each line with the bundled `cJSON`. Log lines and command replies share the port; that is fine, the Mac side filters.
+Serial input: the DevKit's UART connector is a CP2102N bridge on **UART0** (GPIO43/44), the same UART the log console uses, so no extra pins. Install the UART driver on UART0 at 115200 8N1, read it line by line, parse each line with the bundled `cJSON`. Log lines and command replies share the port; that is fine, the Mac side filters. Wi-Fi input is the same lines on a TCP socket, see the Wi-Fi section at the end.
 
-Tasks: `serial` (reads lines, validates, posts a command struct) and `render` (40 fps, draws the current mode, applies brightness and the ttl fallback). One queue between them, nothing else shared. With the DMA driver `render` can sit on core 1; with the interim bit-banged driver both stay on core 0 because its refresh loop owns core 1 and never blocks.
+Tasks: `serial` (UART0 bytes in) and `net` (TCP bytes in) both assemble lines with `command.c`, which validates each one and posts a command struct; `render` (40 fps, draws the current mode, applies brightness and the ttl fallback) is the only consumer. One queue between them, nothing else shared. With the DMA driver `render` can sit on core 1; with the interim bit-banged driver everything else, Wi-Fi and lwIP included, stays on core 0 because its refresh loop owns core 1 and never blocks.
 
 `sdkconfig.defaults` starter:
 
@@ -119,6 +120,9 @@ CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_ESP32_HUB75_USE_GFX=n
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y     # the Wi-Fi stack needs more than the 1 MB default app partition
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y       # core 1 is the panel's
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
 ```
 
 ## Protocol
@@ -166,6 +170,7 @@ The board boots into `test` and stays there until the first command, so a panel 
    ```bash
    . ~/esp/esp-idf/export.sh >/dev/null
    cd firmware/athena_matrix
+   cp ../components/athena_common/include/athena_secrets.h.example ../components/athena_common/include/athena_secrets.h   # first time only; then fill in the Wi-Fi name and password
    idf.py set-target esp32s3        # first time only
    idf.py build
    idf.py -p /dev/cu.usbserial-XXXXXXXX flash
@@ -178,8 +183,8 @@ The board boots into `test` and stays there until the first command, so a panel 
    screen /dev/cu.usbserial-XXXXXXXX 115200        # leave with Ctrl+A then K
    ```
 
-   Send `{"mode":"test"}` first. Four coloured quadrants with a clean border means the ribbon, the scan lines, and E are right. Then `{"mode":"idle","t":"14:32"}` and `{"mode":"think"}`.
-4. **Talk to it from a script.** `scripts/face.py` in the repo root is the Mac side: standard library only, no pyserial. It resolves the port from `--port`, then `ATHENA_MATRIX_PORT`, then the `## Boards` section of `CLAUDE.md`, then a lone `/dev/cu.usbserial-*` or `/dev/cu.usbmodem*`. It clears DTR and RTS in one step after opening, so the bridge does not reset the board.
+   Send `{"mode":"test"}` first. Four coloured quadrants with a clean border means the ribbon, the scan lines, and E are right. Then `{"mode":"idle","t":"14:32"}` and `{"mode":"think"}`. Over Wi-Fi the same works with `nc athena-matrix.local 7075` once the boot log shows `wifi: got ip`.
+4. **Talk to it from a script.** `scripts/face.py` in the repo root is the Mac side: standard library only, no pyserial. It resolves the board from `--host`, then `--port`, then `ATHENA_MATRIX_HOST` (`host[:port]`), then `ATHENA_MATRIX_PORT`, then the `## Boards` section of `CLAUDE.md`, then a lone `/dev/cu.usbserial-*` or `/dev/cu.usbmodem*`, and with nothing on USB it goes to `athena-matrix.local` over Wi-Fi. On serial it clears DTR and RTS in one step after opening, so the bridge does not reset the board.
 
    ```bash
    scripts/face.py test                       # wiring pattern
@@ -188,9 +193,10 @@ The board boots into `test` and stays there until the first command, so a panel 
    scripts/face.py --brightness 60
    scripts/face.py --demo                     # walks through every state, 4 s each
    scripts/face.py --demo --dry-run --pause 0 # prints the lines it would send, no board needed
+   scripts/face.py --host athena-matrix.local --ping   # the board over Wi-Fi, whatever is on USB
    ```
 
-   Only one process can hold the port. Close the monitor before flashing or scripting, or macOS answers `Resource busy`. The `athena-face` plugin holds the port whenever a Hermes session that loaded it is alive.
+   Only one process can hold the serial port. Close the monitor before flashing or scripting, or macOS answers `Resource busy`; the `athena-face` plugin holds the port whenever a Hermes session that loaded it is alive over USB. Over Wi-Fi the board serves up to four connections at once, so the plugin's long-lived one and a one-shot `face.py` never wait for each other.
 
 ### Troubleshooting
 
@@ -209,10 +215,11 @@ The board boots into `test` and stays there until the first command, so a panel 
 
 ## Config
 
-The Hermes side is the project plugin `.hermes/plugins/athena-face/` (enable once with `hermes plugins enable athena-face`, with `HERMES_ENABLE_PROJECT_PLUGINS=true` in `~/.hermes/.env`). It hooks the agent loop (`pre_gateway_dispatch` → listen, `pre_llm_call` → think, `pre_tool_call` → work, `post_tool_call` → think or error, `post_llm_call` → speak, or alert for a cron run, `pre_approval_request` → alert, `api_request_error` → error) and pushes each state to a background thread that owns the serial port through `scripts/face.py`. Hooks never block the agent: if the port is missing or busy the plugin logs one warning and tries again on the next state, no more often than every 30 s. Settings are environment variables in `~/.hermes/.env`:
+The Hermes side is the project plugin `.hermes/plugins/athena-face/` (enable once with `hermes plugins enable athena-face`, with `HERMES_ENABLE_PROJECT_PLUGINS=true` in `~/.hermes/.env`). It hooks the agent loop (`pre_gateway_dispatch` → listen, `pre_llm_call` → think, `pre_tool_call` → work, `post_tool_call` → think or error, `post_llm_call` → speak, or alert for a cron run, `pre_approval_request` → alert, `api_request_error` → error) and pushes each state to a background thread that owns the connection to the board through `scripts/face.py`. Hooks never block the agent: if the board is unreachable the plugin logs one warning and tries again on the next state, no more often than every 30 s. Settings are environment variables in `~/.hermes/.env`:
 
 ```
-ATHENA_MATRIX_PORT=/dev/cu.usbserial-XXXXXXXX   # optional, else face.py's port resolution
+ATHENA_MATRIX_HOST=athena-matrix.local           # optional, the board over Wi-Fi (host[:port]); wins over a board on USB
+ATHENA_MATRIX_PORT=/dev/cu.usbserial-XXXXXXXX   # optional, the board over USB; with neither, face.py takes USB if a board is plugged in, else Wi-Fi
 ATHENA_FACE_BRIGHTNESS=40                        # optional, sent when the port opens
 ATHENA_FACE_SLEEP=23:00-07:00                    # optional, idle shows as sleep in this window
 ATHENA_FACE=0                                    # disable the plugin
@@ -221,6 +228,10 @@ ATHENA_FACE_DRY_RUN=1                            # print the lines instead of op
 
 The board falls back to `idle` on its own when a `think` or `work` outlives its ttl, so a crashed session never leaves the face stuck.
 
-## Later: Wi-Fi
+## Wi-Fi
 
-The earlier design put the same JSON on a WebSocket (`ws://athena-matrix.local/ws`, mDNS via the `mdns` component, `esp_websocket_client`, credentials from `firmware/components/athena_common/include/athena_secrets.h`). It is deferred, not dropped. The line format and the render task stay as they are; only the `serial` task gets a sibling that feeds the same queue from a socket, and the secrets header becomes required on that day. Until then the USB cable is the transport.
+The board joins the network named in `firmware/components/athena_common/include/athena_secrets.h` as a station (gitignored; copy `athena_secrets.h.example` next to it and fill in `ATHENA_WIFI_SSID` and `ATHENA_WIFI_PASS`; one file serves every Athena board). Power save is off so commands land without a DTIM wait, and it rejoins on its own when the network drops: at once for the first five drops, then every 5 s. It announces itself over mDNS as `athena-matrix.local` with the service `_athena-face._tcp` on port 7075 (`FACE_TCP_PORT` in `main/protocol.h`), and logs its address on every join, `I (…) wifi: got ip 10.10.20.93 on <network>, reachable as athena-matrix.local`, so a Mac whose `.local` lookup fails can still use `ATHENA_MATRIX_HOST=<ip>`.
+
+The `net` task (`main/net.c`) accepts up to four TCP connections at once, each with its own line buffer; a fifth is answered `err busy` and closed. TCP keepalive (30 s idle, then three probes 10 s apart) frees the slot of a peer that vanished, such as a Mac that went to sleep, in about a minute. Lines, replies and the render task are exactly the serial ones: `serial.c` stays as the second transport and the boot console, so the cable still works when the network does not, and the last state stays on the panel while the board is offline. There is no authentication: anyone on the network can set the face, which is fine for a display and the reason the protocol must never carry anything sensitive.
+
+The Wi-Fi code lives in `firmware/components/athena_common/` (`athena_wifi.c`, pulled in through `EXTRA_COMPONENT_DIRS`; mDNS is the `espressif/mdns` registry component, so `dependencies.lock` is committed) for the audio board to reuse. Both targets have Wi-Fi; the stack roughly quadruples the binary, hence the 1.5 MB app partition in `sdkconfig.defaults`, and costs about 50 KB of heap on the WROOM. WebSocket, the earlier design, is not used for the matrix: a plain socket keeps `scripts/face.py` standard-library only and the board small, and the audio hub, when it exists, is simply one more client of this port.

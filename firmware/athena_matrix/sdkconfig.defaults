@@ -10,3 +10,11 @@ CONFIG_FREERTOS_HZ=1000
 # The hub75 refresh task owns core 1 and never blocks, so the idle task on that
 # core never runs. Do not let the task watchdog treat that as a hang.
 CONFIG_ESP_TASK_WDT_CHECK_IDLE_TASK_CPU1=n
+
+# Wi-Fi is the second transport (main/net.c, firmware/components/athena_common).
+# The Wi-Fi stack roughly quadruples the binary, so use the 1.5 MB factory
+# partition; it fits the WROOM's 4 MB flash and the S3's 16 MB alike.
+CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
+# Core 1 is the panel's: keep every network task on core 0.
+CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y

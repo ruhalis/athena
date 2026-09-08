@@ -36,7 +36,7 @@ When the user asks for a morning brief, meeting prep, or "what's on my plate tod
 
 ### LED face
 
-A small LED matrix on the desk mirrors your state: listen, think, work, speak, alert (waiting for the user), error, sleep. The `athena-face` plugin drives it from your hooks; you do nothing for it in chat. If the user asks why the face shows something, that is the mapping. Never send serial commands to it yourself.
+A small LED matrix on the desk mirrors your state: listen, think, work, speak, alert (waiting for the user), error, sleep. The `athena-face` plugin drives it from your hooks; you do nothing for it in chat. If the user asks why the face shows something, that is the mapping. Never send commands to it yourself, neither over its serial port nor over the network (`athena-matrix.local`).
 
 ### Cron
 

@@ -1,10 +1,12 @@
 /* protocol.h - the serial face protocol, shared by the serial and render tasks.
  *
- * One JSON object per LF-terminated line on UART0, at most 256 bytes:
+ * One JSON object per LF-terminated line, at most 256 bytes, on UART0 or on
+ * TCP port FACE_TCP_PORT (the Mac reaches it as athena-matrix.local):
  *   {"mode":"think"}  {"mode":"idle","t":"14:32"}  {"mode":"work","ttl":600}  {"brightness":80}  {}
- * Every line is answered with `ok` or `err <reason>`. The serial task parses
- * and validates a line into a face_cmd_t and posts it to one queue; the render
- * task applies it at the next frame. Nothing else crosses between the two.
+ * Every line is answered with `ok` or `err <reason>` on the transport it came
+ * in on. command.c parses and validates a line into a face_cmd_t and posts it
+ * to one queue; the render task applies it at the next frame. Nothing else
+ * crosses between the transports and the renderer.
  */
 #pragma once
 
@@ -28,6 +30,7 @@ typedef enum {
 
 #define FACE_TEXT_MAX   8           /* `t` is at most 8 characters */
 #define FACE_LINE_MAX   256         /* longer lines are dropped with `err too long` */
+#define FACE_TCP_PORT   7075        /* the `net` task listens here; scripts/face.py's default */
 
 typedef struct {
     bool has_mode;

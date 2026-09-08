@@ -6,10 +6,13 @@ LCD_CAM peripheral, so the panel is refreshed by a tight GPIO loop on core 1
 (binary code modulation, 5 bit planes per colour, roughly 100–150 Hz). The same
 loop also runs on the ESP32-S3-DevKitC-1 as the bring-up path until the DMA
 driver from `RGB-MATRIX.md` is wired in. `main/` is the Athena face: `serial.c`
-reads one JSON line per state from UART0 (the USB bridge), `face.c` draws the
-current state at 40 fps, `protocol.h` names the states and their fallback
-times. The protocol is in `RGB-MATRIX.md`; the Mac side is `scripts/face.py`
-and the `athena-face` Hermes plugin.
+reads one JSON line per state from UART0 (the USB bridge) and `net.c` the same
+lines from TCP port 7075 over Wi-Fi (the board answers as `athena-matrix.local`;
+the network's name and password come from `../components/athena_common/include/athena_secrets.h`,
+see Build), `command.c` validates them, `face.c` draws the current state at
+40 fps, `protocol.h` names the states and their fallback times. The protocol
+is in `RGB-MATRIX.md`; the Mac side is `scripts/face.py` and the `athena-face`
+Hermes plugin.
 
 Everything about *how* to build, flash and watch the board lives in the global
 `esp-idf` Claude Code skill. This file holds what is specific to this project:
@@ -24,7 +27,8 @@ the wiring and what the panel should show.
 | or ESP32-S3-DevKitC-1 (N16R8) | the board `RGB-MATRIX.md` is designed for; wire it per that file's J1 table, not the WROOM map below |
 | 16-pin ribbon (ships with the panel) plus 15 female-to-male Dupont wires, or a 2×8 IDC breakout | the ribbon goes on the panel's **IN** header |
 | 5 V supply, **4 A or more**, on the panel's 4-pin VH power lead | the ESP32's 5V pin can feed it only for a short wiring check at brightness 12, see Power and order |
-| Micro-USB cable to the WROOM DevKit, or USB-C to the S3's **UART** connector | powers the board and carries the log |
+| Micro-USB cable to the WROOM DevKit, or USB-C to the S3's **UART** connector | powers the board, carries the boot log, flashes it, and is the fallback command channel; with Wi-Fi up, commands normally arrive over the network instead |
+| A 2.4 GHz Wi-Fi network | its name and password go in `firmware/components/athena_common/include/athena_secrets.h` (see Build); with the wrong ones the face still works over USB |
 
 ## Wiring
 
@@ -126,6 +130,7 @@ moment; a 10 kΩ pull-up from GPIO4 to 3.3 V keeps it dark during boot.
 ```bash
 . ~/esp/esp-idf/export.sh >/dev/null
 cd firmware/athena_matrix
+cp ../components/athena_common/include/athena_secrets.h.example ../components/athena_common/include/athena_secrets.h   # first time only; then fill in the Wi-Fi name and password
 idf.py set-target esp32              # first time only; esp32s3 for the S3 DevKitC-1
 idf.py build
 idf.py -p /dev/cu.usbserial-XXXXXXXX flash
@@ -138,12 +143,18 @@ Boot log to expect:
 I (xxx) hub75: 64x64 1/32 scan, 5 bit planes, brightness 12, refresh on core 1
 I (xxx) hub75: R1=23 G1=22 B1=21 R2=19 G2=18 B2=5 A=25 B=26 C=27 D=14 E=13 CLK=17 LAT=16 OE=4   (the S3 map on an S3)
 I (xxx) serial: UART0 115200 8N1, lines up to 256 bytes
+I (xxx) wifi: station athena-matrix, mdns athena-matrix.local, service _athena-face
+I (xxx) net: listening on tcp port 7075, up to 4 clients
 I (xxx) athena_matrix: ready: boot mode test, modes: idle listen think work speak alert error sleep test off
+I (xxx) wifi: got ip 10.10.20.93 on <your network>, reachable as athena-matrix.local      (a few seconds later)
 ```
 
 From then on every line you send is answered with `ok` or `err <reason>`, and
 an applied state is logged as `I (xxx) face: mode think ttl 120`. From the
-monitor, type `{"mode":"think"}` and Enter; from the Mac, `scripts/face.py think`.
+monitor, type `{"mode":"think"}` and Enter; from the Mac, `scripts/face.py think`,
+which takes the board on USB if one is plugged in and `athena-matrix.local`
+otherwise (`--host athena-matrix.local` to insist on Wi-Fi; `nc athena-matrix.local 7075`
+to type lines by hand).
 
 ## What the panel shows
 
@@ -183,7 +194,12 @@ the colour and the haze behind the ring fade more slowly over 2 s, and `t` fades
 | Faint ghost of the row above | ribbon too long; try a 74HCT245 |
 | Flicker | check the log: refresh under 100 Hz means the loop is starved; drop `color_depth` to 4 |
 | ESP32 resets when the panel goes bright | supply sag or a missing common ground |
-| `Resource busy` on the port | another monitor holds it; close it |
+| `Resource busy` on the port | another monitor holds it; close it, or talk to the board over Wi-Fi |
+| No `wifi: got ip` line, `disconnected (reason …)` repeats | the reason's hint in the log: no AP with that name in range (2.4 GHz only), or a wrong password; fix `athena_secrets.h`, rebuild, flash |
+| `got ip`, but `athena-matrix.local` does not resolve on the Mac | the network blocks mDNS queries: use the address from that line, `ATHENA_MATRIX_HOST=10.x.x.x` |
+| `got ip`, but no reply over Wi-Fi at all | the Mac is on another network, or the access point isolates clients: `ping` the board's address; if that fails, the cable is the transport |
+| Boot loops right after `got ip` | a panic in the Wi-Fi path: watch the serial log for `Guru Meditation` and decode the backtrace per the `esp-idf` skill |
+| `err busy` over Wi-Fi | four connections are already open; close one (a vanished peer frees its slot after about a minute) |
 
 ## Preview on the Mac
 

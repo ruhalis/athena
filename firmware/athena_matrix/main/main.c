@@ -1,7 +1,9 @@
-/* Athena matrix: the face. app_main brings up the panel, then two tasks on
+/* Athena matrix: the face. app_main brings up the panel, then three tasks on
  * core 0 do the work: `serial` turns UART0 lines into commands (protocol.h),
- * `render` draws the current mode at 40 fps. Core 1 belongs to the hub75
- * refresh loop and nothing else is ever pinned there.
+ * `net` does the same for TCP connections once Wi-Fi is up, `render` draws
+ * the current mode at 40 fps. Core 1 belongs to the hub75 refresh loop and
+ * nothing else is ever pinned there; Wi-Fi and lwIP are pinned to core 0 in
+ * sdkconfig.defaults for the same reason.
  */
 #include <string.h>
 
@@ -9,15 +11,19 @@
 #include "freertos/queue.h"
 #include "esp_log.h"
 
+#include "athena_wifi.h"
 #include "board_pins.h"
+#include "command.h"
 #include "face.h"
 #include "hub75.h"
+#include "net.h"
 #include "protocol.h"
 #include "serial.h"
 
 static const char *TAG = "athena_matrix";
 
 #define CMD_QUEUE_DEPTH   8
+#define HOSTNAME          "athena-matrix"     /* athena-matrix.local */
 
 /* Append a space-separated word to a bounded buffer. */
 static void append_word(char *buf, size_t size, const char *word)
@@ -42,8 +48,24 @@ void app_main(void)
         ESP_LOGE(TAG, "no memory for the command queue");
         return;
     }
+    cmd_init(queue);
     ESP_ERROR_CHECK(face_start(queue));
-    ESP_ERROR_CHECK(serial_start(queue));
+    ESP_ERROR_CHECK(serial_start());
+
+    /* Wi-Fi is the second transport, not a requirement: without it the face
+     * still works over the cable, so a failure here is logged, not fatal. */
+    static const athena_wifi_config_t wifi = {
+        .hostname = HOSTNAME,
+        .service = "_athena-face",
+        .service_port = FACE_TCP_PORT,
+    };
+    esp_err_t err = athena_wifi_start(&wifi);
+    if (err == ESP_OK) {
+        err = net_start();
+    }
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "wifi transport unavailable: %s, serial only", esp_err_to_name(err));
+    }
 
     char modes[96] = "";
     for (int m = 0; m < FACE_MODE_COUNT; m++) {

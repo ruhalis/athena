@@ -1,4 +1,4 @@
-"""athena-face: show the agent's lifecycle on the LED face over USB serial.
+"""athena-face: show the agent's lifecycle on the LED face over Wi-Fi or USB serial.
 
 Hook -> face state (the modes of scripts/face.py):
 
@@ -13,7 +13,7 @@ Hook -> face state (the modes of scripts/face.py):
     post_approval_response  think
     on_session_end          idle     or error when failed is true
 
-Hooks only enqueue; one daemon thread owns the port. It coalesces bursts
+Hooks only enqueue; one daemon thread owns the connection. It coalesces bursts
 (100 ms); an `idle` never displaces `alert` (sticky until other activity),
 `speak` or `error` (the board's own ttl ends those, and the worker sends the
 idle clock when it does); it holds `error` 2 s and `speak` 3 s before the next
@@ -23,8 +23,10 @@ At interpreter exit it flushes the last queued state so a one-shot
 worker is logged and the worker carries on.
 
 Environment: ATHENA_FACE=0 disables the plugin; ATHENA_FACE_DRY_RUN=1 prints
-each JSON line to stderr instead of opening a port; ATHENA_MATRIX_PORT is the
-serial device (else scripts/face.py auto-detects); ATHENA_FACE_BRIGHTNESS is
+each JSON line to stderr instead of opening a connection; ATHENA_MATRIX_HOST
+is the board over Wi-Fi (host[:port], e.g. athena-matrix.local) and
+ATHENA_MATRIX_PORT the serial device (with neither, scripts/face.py takes a
+board on USB, else athena-matrix.local); ATHENA_FACE_BRIGHTNESS is
 0..255, sent after every (re)open; ATHENA_FACE_SLEEP is HH:MM-HH:MM (may wrap
 midnight), inside it idle shows as sleep.
 """
@@ -100,11 +102,12 @@ def _in_window(window, now=None):
 
 
 class _Driver:
-    """Owns the serial port. Hooks call push(); everything else runs on the worker."""
+    """Owns the connection to the board. Hooks call push(); everything else runs on the worker."""
 
     def __init__(self, face, dry_run, brightness, window):
         self._mod, self._dry_run, self._brightness, self._window = face, dry_run, brightness, window
-        self._face = face.Face(port=os.environ.get("ATHENA_MATRIX_PORT") or None)
+        self._face = face.Face(port=os.environ.get("ATHENA_MATRIX_PORT") or None,
+                               host=os.environ.get("ATHENA_MATRIX_HOST") or None)
         self._q, self._lock, self._thread = queue.Queue(), threading.Lock(), None
         self._connected, self._warned, self._retry_at = False, False, 0.0
 
@@ -202,7 +205,7 @@ class _Driver:
             self._fail("cannot open the face board: %s" % exc)
             return False
         self._connected, self._warned = True, False
-        log.info("face board connected on %s", "dry run" if self._dry_run else self._face.port)
+        log.info("face board connected on %s", "dry run" if self._dry_run else self._face.where)
         return True
 
     def _write(self, obj):
@@ -264,4 +267,4 @@ def register(ctx):
         ctx.register_hook(name, cb)
     _driver.push("idle")            # show the clock as soon as Hermes is up, not only after the first turn
     atexit.register(_driver.close)
-    log.info("athena-face enabled (%s)", "dry run" if dry_run else "port %s" % (_driver._face.port or "auto"))
+    log.info("athena-face enabled (%s)", "dry run" if dry_run else "board %s" % (_driver._face.where or "auto"))
