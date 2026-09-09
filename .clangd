@@ -1,0 +1,5 @@
+# clangd config for the ESP-IDF firmware under firmware/. The compile database
+# comes from the xtensa/riscv GCC build, so strip the GCC-only -f*/-m* flags
+# before esp-clang parses it (same template the ESP-IDF VS Code extension writes).
+CompileFlags:
+  Remove: [-f*, -m*]

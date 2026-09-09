@@ -18,7 +18,7 @@ the table); the wiring and enclosure sections assume those exact modules.
 | Mics ×2 | **ICS-43434** I2S breakouts, same batch. Bought: the 16.8 × 13 mm rectangular module with the part number on the silkscreen, 6 pins (VDD, GND, SD, SCK, WS, L/R), two mounting holes, bottom port through the PCB (ozon.kz 3853348206) | 65 dBA SNR meets Espressif's "≥64 dB recommended". INMP441 is 61 dBA, below their 62 dB floor; it works but wake range suffers. On arrival check the can size: ICS-43434 is 3.5 × 2.65 mm, INMP441 is 4.72 × 3.76 mm |
 | Amp | MAX98357A I2S class-D breakout. Bought: the common purple board with a screw terminal and pins LRC, BCLK, DIN, GAIN, SD, GND, VIN (ozon.kz 1620664040) | 3.2 W into 4 Ω at 5 V, accepts 16/24/32-bit slots, SD pin gives a mute/enable |
 | Speaker | 4 Ω 3 W full-range, 40–50 mm, in a sealed chamber. Bought: KSV FR0021, 50 mm round, 4 Ω 3 W, a bare driver with solder tabs, so it needs its own leads and a chamber (ozon.kz 797046558) | Voice band only; small sealed box is enough. Ozon had no pre-enclosed 40–50 mm speaker |
-| Power | 5 V ≥ 2 A USB-C adapter for this board, or a shared 5 V ≥ 6 A rail with the matrix | Amp peaks near 1 A; matrix can pull 4 A |
+| Power | 5 V ≥ 2 A USB-C adapter for this board on the bench, or the shared 5 V 8 A bus of the boxed build (`ASSEMBLY.md`) | Amp peaks near 1 A; matrix can pull 4 A |
 | Caps | 470–1000 µF across amp VIN/GND; 100 nF at each mic VDD | Class-D current spikes and mic PSRR |
 | Optional | Momentary button for push-to-talk | Lets you test the whole loop before the wake word works |
 | Mechanical | Rubber grommets or foam gaskets for the mics, dust mesh, 16-pin cable to the matrix board is unrelated | See acoustic rules below |

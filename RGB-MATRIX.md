@@ -54,6 +54,7 @@ A 64×64 panel is 1/32 scan: A–E select one of 32 row pairs and the R/G/B line
 - **One ground.** Panel GND, PSU GND, and a DevKit ground pin must be tied together, or the data lines have no reference and the panel shows noise. Ribbon pins 4 and 16 do this if the DevKit ground goes to the breakout.
 - Order: ribbon on, ground tied, panel PSU on, then the DevKit's USB. Never plug or unplug the ribbon with the panel powered.
 - Start at brightness 40 of 255 while wiring. Full white at 255 is where the 4 A goes.
+- Boxed build: `ASSEMBLY.md` replaces the panel PSU and the Mac's USB power with one 5 V 8 A adapter and a bus that feeds the panel, this DevKit and the audio board; USB then carries data only, and the order becomes adapter first, then USB.
 
 ## Wiring the ribbon to the DevKit
 

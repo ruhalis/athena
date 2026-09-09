@@ -10,6 +10,7 @@ This repo is the portable overlay. Secrets and OAuth tokens stay in `~/.hermes/`
 - **Linear** — catalog MCP declared in `mcp.json`. Authenticate once with `hermes mcp login linear`
 - **Gmail / Google Calendar** — bundled `google-workspace` skill; Desktop client JSON at `google_client_secret.json` in the repo root (gitignored). Bootstrap installs it into `~/.hermes/`.
 - **LED face** — a 64×64 HUB75 matrix on an ESP32 mirrors what the agent is doing (idle, listen, think, work, speak, alert, error, sleep). The `athena-face` project plugin maps Hermes hooks to those states and sends them to the board over Wi-Fi (`athena-matrix.local`) or USB serial through `scripts/face.py`; design and protocol in `RGB-MATRIX.md`, firmware in `firmware/athena_matrix/`.
+- **Voice** — `scripts/voice.py` talks through the Mac's microphone and speakers with the OpenAI Realtime API (`gpt-realtime-2.1`) and mirrors each turn on the LED face (listen, think, speak). Needs `uv`; stop with Ctrl-C or `scripts/voice.py --stop`.
 - **ESP32 boards** — face (`RGB-MATRIX.md`, running on a WROOM-32 prototype) and audio (`AUDIO-BOARD.md`, planned), built with pure ESP-IDF through the global Claude Code `esp-idf` skill (`~/.claude/skills/esp-idf/`, not in this repo; Hermes does not load it). Athena-specific conventions are in `CLAUDE.md`.
 
 See `HERMES.md` for agent-facing instructions.
