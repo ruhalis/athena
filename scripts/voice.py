@@ -42,7 +42,6 @@ import asyncio
 import base64
 import json
 import os
-import queue
 import signal
 import sys
 import threading
@@ -56,7 +55,7 @@ import websockets
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent
 sys.path.insert(0, str(HERE))
-import face as face_mod  # noqa: E402  scripts/face.py: Face, FaceError, find_target, now_hhmm
+import face as face_mod  # noqa: E402  scripts/face.py: FaceLink (the board on its own thread)
 
 RATE = 24000                     # the Realtime API's PCM rate, both directions
 BLOCK_MS = 100                   # one microphone chunk / one playback block
@@ -96,128 +95,6 @@ def load_api_key():
                 if val:
                     return val
     return None
-
-
-# ----------------------------------------------------------------------------- face
-
-class FaceLink:
-    """Owns the connection to the board on its own thread; callers push(mode) and return.
-
-    Bursts within 50 ms collapse to the last mode. idle/alert are re-sent every minute
-    with the clock; speak is sent with a 30 s ttl and re-sent every 20 s, so a bridge
-    that dies mid-sentence never leaves the board stuck in speak; error falls back to
-    idle after 10 s (the board does the same on its own); a lost board is retried
-    every 10 s with the last wanted mode."""
-
-    CLOCK = ("idle", "alert")
-    STICKY = ("idle", "alert", "sleep")
-    TTL = {"speak": 30}
-    REFRESH = {"idle": 60.0, "alert": 60.0, "speak": 20.0}
-    FALLBACK = {"error": 10.0}
-    RETRY, COALESCE = 10.0, 0.05
-
-    def __init__(self, host=None, port=None, brightness=None, dry_run=False, enabled=True):
-        self.enabled, self.dry_run, self.brightness = enabled, dry_run, brightness
-        self._face = face_mod.Face(host=host, port=port)
-        self._q = queue.Queue()
-        self._connected = self._warned = False
-        self._t = threading.Thread(target=self._run, name="face", daemon=True)
-        if enabled:
-            self._t.start()
-
-    def where(self):
-        if not self.enabled:
-            return "off (--no-face)"
-        if self.dry_run:
-            return "dry run"
-        kind, target = face_mod.find_target(port=self._face.port, host=self._face.host)
-        return "%s:%d over Wi-Fi" % target if kind == "tcp" else target + " over USB"
-
-    def push(self, mode):
-        if self.enabled:
-            self._q.put(mode)
-
-    def close(self, final="idle"):
-        if not self.enabled or not self._t.is_alive():
-            return
-        self._q.put(("stop", final))
-        self._t.join(timeout=4)
-
-    def _run(self):
-        wanted = shown = None
-        shown_at = retry_at = 0.0
-        while True:
-            now = time.monotonic()
-            if wanted is not None and not self._connected and not self.dry_run:
-                deadline = retry_at
-            elif shown in self.REFRESH:
-                deadline = shown_at + self.REFRESH[shown]
-            elif shown in self.FALLBACK:
-                deadline = shown_at + self.FALLBACK[shown]
-            else:
-                deadline = None
-            try:
-                item = self._q.get(timeout=None if deadline is None else max(0.0, deadline - now))
-            except queue.Empty:
-                item = None
-            if item is not None:
-                if isinstance(item, tuple):
-                    self._send(item[1])
-                    self._face.close()
-                    return
-                wanted = item
-                end = time.monotonic() + self.COALESCE
-                while True:                                  # collapse the rest of the burst
-                    try:
-                        nxt = self._q.get(timeout=max(0.0, end - time.monotonic()))
-                    except queue.Empty:
-                        break
-                    if isinstance(nxt, tuple):
-                        self._send(nxt[1])
-                        self._face.close()
-                        return
-                    wanted = nxt
-            now = time.monotonic()
-            if item is None and shown in self.FALLBACK and now - shown_at >= self.FALLBACK[shown]:
-                wanted = "idle"
-            refresh = (shown is not None and shown == wanted and shown in self.REFRESH
-                       and now - shown_at >= self.REFRESH[shown])
-            if wanted is None or (wanted == shown and not refresh):
-                continue
-            if not self._connected and not self.dry_run and now < retry_at:
-                continue
-            if self._send(wanted):
-                shown, shown_at = wanted, now
-            else:
-                shown, retry_at = None, now + self.RETRY
-
-    def _send(self, mode):
-        obj = {"mode": mode}
-        if mode in self.CLOCK:
-            obj["t"] = face_mod.now_hhmm()
-        if mode in self.STICKY:
-            obj["ttl"] = 0
-        elif mode in self.TTL:
-            obj["ttl"] = self.TTL[mode]
-        if self.dry_run:
-            log("face -> " + json.dumps(obj, separators=(",", ":")))
-            return True
-        try:
-            if not self._connected:
-                self._face.open()
-                if self.brightness is not None:
-                    self._face.send({"brightness": self.brightness})
-                self._connected, self._warned = True, False
-                log("face: connected to %s" % self._face.where)
-            self._face.send(obj)
-            return True
-        except face_mod.FaceError as e:
-            self._face.close()
-            self._connected = False
-            if not self._warned:
-                log("face: %s (retrying every %.0f s)" % (e, self.RETRY))
-                self._warned = True
-            return False
 
 
 # ---------------------------------------------------------------------------- audio
@@ -614,7 +491,7 @@ def main(argv=None):
         print("error: OPENAI_API_KEY is not set and not in %s or ~/.hermes/.env" % (REPO / ".env"), file=sys.stderr)
         return 2
 
-    face = FaceLink(host=args.face_host, port=args.face_port, brightness=args.brightness,
+    face = face_mod.FaceLink(log=log, host=args.face_host, port=args.face_port, brightness=args.brightness,
                     dry_run=args.face_dry_run, enabled=args.face)
     PIDFILE.parent.mkdir(parents=True, exist_ok=True)
     PIDFILE.write_text(str(os.getpid()))

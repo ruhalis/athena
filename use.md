@@ -19,6 +19,23 @@ Both live in ~/projects/athena/scripts/. The voice bridge is still running in th
   nohup ./scripts/voice.py > ~/.hermes/logs/athena-voice.log 2>&1 &
   tail -f ~/.hermes/logs/athena-voice.log
 
+  Voice station (on the Mac mini, talks through the ESP32 audio board)
+
+  ssh delphi@100.95.128.31
+  /opt/homebrew/bin/python3 ~/athena-face/scripts/station.py      # hears the board's mic, answers on its speaker; Ctrl-C stops it
+
+  Useful variants:
+
+  ... station.py --question "сколько объектов с нарушениями"        # no mic: ask this, speak the answer, exit
+  ... station.py --inject question.wav --once                        # a WAV as the question, then exit
+  ... station.py --no-speak --no-face --question "..."               # brain only, prints what it would say
+  ... station.py --gain 12                                           # louder (clips harder); default 6
+  ... station.py --stt whispercpp                                    # whisper.cpp on 8088 instead of the gateway's whisper (4x faster)
+  ... station.py --vad-db 14                                         # a noisier room: voice must be further above the floor
+
+  It never listens while it thinks or speaks: the mic opens again ~0.6 s after the last word.
+  Update it: on the laptop commit to main, copy to the face-plugin branch (see SETUP.md), on the mini git -C ~/athena-face pull.
+
   Matrix demo (walk through every state)
 
   cd ~/projects/athena

@@ -70,3 +70,18 @@ In a **new** Hermes session (cwd = this repo):
 3. Commit the example JSON. Leave `~/.hermes/cron/jobs.json` untracked.
 
 Delivery uses `TELEGRAM_HOME_CHANNEL`. If nothing is configured, output stays local under `~/.hermes/cron/output/`.
+
+## Voice station on the Mac mini
+
+`scripts/station.py` is not for this laptop: it runs on the office Mac mini (`delphi@100.95.128.31`), which is always on, sits on the boards' Wi-Fi and already runs the speech servers it needs (the Hermes gateway's STT on 8642, the TTS server on 8089) and the Burabai assistant code in `~/burabai-station`. It gets there through the orphan `face-plugin` branch, cloned at `~/athena-face` on the mini.
+
+```bash
+# on the laptop, after changing station.py / audio.py / face.py on main
+git checkout face-plugin && git checkout main -- .hermes/plugins/athena-face scripts/face.py scripts/audio.py scripts/station.py scripts/com.athena.station.plist && git commit -m "..." && git push && git checkout main
+# on the mini
+git -C ~/athena-face pull
+/opt/homebrew/bin/python3 ~/athena-face/scripts/station.py            # one command: it now hears the audio board; Ctrl-C stops it
+/opt/homebrew/bin/python3 ~/athena-face/scripts/station.py --question "какие договоры истекают в ближайшие 60 дней"   # brain + speaker, no microphone
+```
+
+Homebrew's `python3` is the one with `openai` and `httpx`, which `hermes_core` imports. Always on instead of by hand: `cp ~/athena-face/scripts/com.athena.station.plist ~/Library/LaunchAgents/ && launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.athena.station.plist`; the log is `~/.hermes/logs/athena-station.log`. The delphi gateway's face plugin keeps pushing its own states to the same face while the station runs; give the face to the station alone with `ATHENA_FACE=0` in the mini's `~/.hermes/.env` and a gateway restart.
