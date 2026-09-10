@@ -2,7 +2,7 @@
 
 Companion to `RGB-MATRIX.md` (the face) and `AUDIO-BOARD.md` (the ears and
 mouth). Those two notes describe each board on its own supply. This one puts
-the panel, the matrix ESP32-S3, the audio ESP32-S3, the amp, the two mics and
+the panel, the matrix ESP32-WROOM-32, the audio ESP32-S3, the amp, the two mics and
 the speaker into one enclosure fed by **one 5 V 8 A adapter through one
 cable**. Nothing inside converts voltage; the adapter's 5 V is the only rail.
 
@@ -17,7 +17,7 @@ bench setup with separate supplies.
 | Item | Detail | Defined in |
 |---|---|---|
 | Panel | Waveshare RGB-Matrix-P2 64×64 (128 × 128 × 15 mm), HUB75E, VH4 power lead | `RGB-MATRIX.md` |
-| Matrix MCU | ESP32-S3-DevKitC-1 N16R8, ribbon on J1 per the pin map | `RGB-MATRIX.md` |
+| Matrix MCU | ESP32-WROOM-32 DevKit, ribbon per `main/board_pins.h` (one job per board since 2026-09-10: the S3 is the audio board) | `firmware/athena_matrix/README.md` |
 | Audio MCU | ESP32-S3-DevKitC-1 N16R8, I2S on GPIO 5/6/7/15, amp SD on 16 | `AUDIO-BOARD.md` |
 | Mics | 2× ICS-43434 (ozon order) or 2× INMP441 (Almaty stock) | `AUDIO-BOARD.md` |
 | Amp + speaker | MAX98357A, 4 Ω 3 W driver in a sealed chamber | `AUDIO-BOARD.md` |

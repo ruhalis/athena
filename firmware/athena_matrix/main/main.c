@@ -1,10 +1,8 @@
-/* Athena matrix: the face, and the ears and mouth. app_main brings up the
- * panel, then the tasks on core 0 do the work: `serial` turns UART0 lines
- * into commands (protocol.h), `net` does the same for TCP connections once
- * Wi-Fi is up, `render` draws the current mode at 40 fps, and the four
- * `audio_*` tasks bridge the I2S microphone and amplifier to a second TCP
- * port (audio.h). Core 1 belongs to the hub75 refresh loop and nothing else
- * is ever pinned there; Wi-Fi and lwIP are pinned to core 0 in
+/* Athena matrix: the face. app_main brings up the panel, then three tasks on
+ * core 0 do the work: `serial` turns UART0 lines into commands (protocol.h),
+ * `net` does the same for TCP connections once Wi-Fi is up, `render` draws
+ * the current mode at 40 fps. Core 1 belongs to the hub75 refresh loop and
+ * nothing else is ever pinned there; Wi-Fi and lwIP are pinned to core 0 in
  * sdkconfig.defaults for the same reason.
  */
 #include <string.h>
@@ -14,7 +12,6 @@
 #include "esp_log.h"
 
 #include "athena_wifi.h"
-#include "audio.h"
 #include "board_pins.h"
 #include "command.h"
 #include "face.h"
@@ -68,14 +65,6 @@ void app_main(void)
     }
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "wifi transport unavailable: %s, serial only", esp_err_to_name(err));
-    } else {
-        /* The microphone and the amplifier exist only over the network, so
-         * they start after it (lwIP asserts on a socket() before that) and
-         * are optional like it: the face does not depend on them. */
-        err = audio_start(&(audio_pins_t)BOARD_AUDIO_PINS);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "audio unavailable: %s, face only", esp_err_to_name(err));
-        }
     }
 
     char modes[96] = "";

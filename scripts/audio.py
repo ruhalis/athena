@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Stream audio to and from the Athena matrix board's audio hub over TCP.
+"""Stream audio to and from the Athena audio board over TCP.
 
 Protocol: the board listens on TCP 7076 (AUDIO_TCP_PORT in
-firmware/athena_matrix/main/audio.h) for one client at a time; a second
+firmware/athena_audio/main/audio.h) for one client at a time; a second
 connection is closed immediately. Both directions share that one socket
 as raw PCM: signed 16-bit little-endian, 16000 Hz, mono, no framing. On
 connect the board streams its microphone continuously; every byte
@@ -11,13 +11,15 @@ board never drops the client for a slow mic read (it drops mic samples
 instead), but a play-only client should still drain what it receives so
 its own socket buffer does not fill.
 
-Target resolution: --host (host or host:port), else $ATHENA_MATRIX_HOST
-(host part only; a :port there is the face port 7075 and is ignored),
-else athena-matrix.local. --port sets the audio port (default 7076) and
-overrides any port from --host.
+Target resolution: --host (host or host:port), else $ATHENA_AUDIO_HOST
+(same form), else athena-audio.local. --port sets the audio port (default
+7076) and overrides any port from --host or the variable. The matrix board
+is a different host with no audio, so ATHENA_MATRIX_HOST is not consulted.
 
 Subcommands: meter [SECONDS], record SECONDS OUT.wav, play FILE.wav
-(resampled/downmixed to 16 kHz mono as needed), tone [HZ] [SECONDS].
+(resampled/downmixed to 16 kHz mono as needed; --gain DB scales it before
+sending, clipped at full scale, --normalize lifts its peak to 0 dBFS first),
+tone [HZ] [SECONDS].
 """
 
 import argparse
@@ -34,7 +36,7 @@ SAMPLE_RATE = 16000
 CHUNK_BYTES = 640                      # 20 ms of 16 kHz mono s16le
 BYTES_PER_SEC = SAMPLE_RATE * 2
 
-DEFAULT_HOST = "athena-matrix.local"   # the firmware's mDNS name (main/main.c HOSTNAME)
+DEFAULT_HOST = "athena-audio.local"    # the firmware's mDNS name (firmware/athena_audio/main/main.c HOSTNAME)
 DEFAULT_PORT = 7076                    # AUDIO_TCP_PORT in main/audio.h
 
 class AudioError(Exception):
@@ -59,17 +61,19 @@ def resolve_target(args):
         if port is None:
             port = host_port
     else:
-        env = os.environ.get("ATHENA_MATRIX_HOST")
-        host, _ = parse_hostport(env) if env else (DEFAULT_HOST, None)
+        env = os.environ.get("ATHENA_AUDIO_HOST")
+        host, env_port = parse_hostport(env) if env else (DEFAULT_HOST, None)
+        if port is None:
+            port = env_port
     return host, port if port is not None else DEFAULT_PORT
 
 def connect(host, port):
     try:
         sock = socket.create_connection((host, port), timeout=5)
     except socket.gaierror as e:
-        raise AudioError("cannot resolve %s: %s (set ATHENA_MATRIX_HOST=<ip> to skip mDNS)" % (host, e), code=2)
+        raise AudioError("cannot resolve %s: %s (set ATHENA_AUDIO_HOST=<ip> to skip mDNS)" % (host, e), code=2)
     except OSError as e:
-        raise AudioError("cannot reach %s:%d: %s (set ATHENA_MATRIX_HOST=<ip> to skip mDNS)" % (host, port, e), code=2)
+        raise AudioError("cannot reach %s:%d: %s (set ATHENA_AUDIO_HOST=<ip> to skip mDNS)" % (host, port, e), code=2)
     sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     sock.settimeout(2.0)
     return sock
@@ -229,12 +233,36 @@ def send_samples(sock, samples):
     stop.set()
     return duration, received[0]
 
-def cmd_play(sock, path):
+def apply_gain(samples, db):
+    """Scale by `db` dB with hard clipping at full scale. -> (samples, clipped count)."""
+    g = 10.0 ** (db / 20.0)
+    out = array.array("h", bytes(2 * len(samples)))
+    clipped = 0
+    for i, s in enumerate(samples):
+        v = int(round(s * g))
+        if v > 32767:
+            v, clipped = 32767, clipped + 1
+        elif v < -32768:
+            v, clipped = -32768, clipped + 1
+        out[i] = v
+    return out, clipped
+
+def normalize_db(samples):
+    """The gain in dB that puts the peak at 0 dBFS (0 for silence)."""
+    peak = max((abs(s) for s in samples), default=0)
+    return 20.0 * math.log10(32767.0 / peak) if peak else 0.0
+
+def cmd_play(sock, path, gain_db=0.0, normalize=False):
     try:
         samples, rate, channels = read_wav_16k_mono(path)
     except (wave.Error, OSError) as e:
         raise AudioError("cannot read %s: %s" % (path, e), code=2)
-    print("%s: %d Hz, %d channel(s)" % (path, rate, channels))
+    print("%s: %d Hz, %d channel(s), peak %.1f dBFS" % (path, rate, channels, -normalize_db(samples)))
+    if normalize:
+        gain_db += normalize_db(samples)
+    if gain_db:
+        samples, clipped = apply_gain(samples, gain_db)
+        print("gain %+.1f dB%s" % (gain_db, ", %d samples clipped" % clipped if clipped else ""))
     duration, received = send_samples(sock, samples)
     print("sent %.2f s (drained %d bytes from the board)" % (duration, received))
     return 0
@@ -252,17 +280,19 @@ def build_parser():
   audio.py meter
   audio.py record 3 out.wav
   audio.py play out.wav
+  audio.py play --gain 6 out.wav
+  audio.py play --normalize out.wav
   audio.py tone 440 2
   audio.py --host 192.168.1.50 --port 7076 tone
 """
     p = argparse.ArgumentParser(
         prog="audio.py",
-        description="Stream audio to and from the Athena matrix board's audio hub over TCP.",
+        description="Stream audio to and from the Athena audio board over TCP.",
         epilog=epilog,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--host", metavar="HOST[:PORT]", help="board over Wi-Fi (default port %d)" % DEFAULT_PORT)
-    p.add_argument("--port", type=int, help="audio TCP port, overrides ATHENA_MATRIX_HOST/--host's port")
+    p.add_argument("--host", metavar="HOST[:PORT]", help="the audio board over Wi-Fi (default %s, port %d)" % (DEFAULT_HOST, DEFAULT_PORT))
+    p.add_argument("--port", type=int, help="audio TCP port, overrides ATHENA_AUDIO_HOST/--host's port")
     sub = p.add_subparsers(dest="command", required=True)
     m = sub.add_parser("meter", help="print running RMS/peak of the board's mic")
     m.add_argument("seconds", nargs="?", type=float, default=5.0)
@@ -271,6 +301,10 @@ def build_parser():
     r.add_argument("out", metavar="OUT.wav")
     pl = sub.add_parser("play", help="play a WAV file through the board's speaker")
     pl.add_argument("file", metavar="FILE.wav")
+    pl.add_argument("--gain", type=float, default=0.0, metavar="DB",
+                    help="digital gain in dB before sending, clipped at full scale (e.g. 6)")
+    pl.add_argument("--normalize", action="store_true",
+                    help="lift the file's peak to 0 dBFS first; --gain then applies on top")
     tn = sub.add_parser("tone", help="synthesize and play a sine tone")
     tn.add_argument("hz", nargs="?", type=float, default=440.0)
     tn.add_argument("seconds", nargs="?", type=float, default=2.0)
@@ -287,7 +321,7 @@ def main(argv=None):
             if args.command == "record":
                 return cmd_record(sock, args.seconds, args.out)
             if args.command == "play":
-                return cmd_play(sock, args.file)
+                return cmd_play(sock, args.file, args.gain, args.normalize)
             if args.command == "tone":
                 return cmd_tone(sock, args.hz, args.seconds)
         finally:

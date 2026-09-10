@@ -1,0 +1,8 @@
+# The table from AUDIO-BOARD.md. `model` is where ESP-SR keeps its models from
+# stage 5 on; it is here from the start so a flashed board is never re-partitioned.
+# NVS and PHY are Wi-Fi's.
+# Name,     Type, SubType, Offset,  Size
+nvs,        data, nvs,     0x9000,  24K
+phy_init,   data, phy,     0xf000,  4K
+factory,    app,  factory, 0x10000, 3M
+model,      data, spiffs,  ,        6M

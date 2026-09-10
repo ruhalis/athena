@@ -5,7 +5,6 @@
 #pragma once
 
 #include "sdkconfig.h"
-#include "audio.h"
 #include "hub75.h"
 
 #if CONFIG_IDF_TARGET_ESP32S3
@@ -22,11 +21,6 @@
     .a = 17, .b = 18, .c = 8, .d = 9, .e = 10, \
     .clk = 11, .lat = 12, .oe = 13, \
 }
-
-/* I2S for the microphone and the amplifier, on pins the panel does not use.
- * GPIO 1, 2, 14 and 21 are free on the headers; untested on this board, and
- * AUDIO-BOARD.md's separate S3 audio board uses 5/6/7/15 instead. */
-#define BOARD_AUDIO_PINS { .bclk = 1, .ws = 2, .dout = 14, .din = 21 }
 
 #else
 
@@ -53,14 +47,5 @@
     .a = 25, .b = 26, .c = 27, .d = 14, .e = 13, \
     .clk = 17, .lat = 16, .oe = 4,  \
 }
-
-/* I2S for the microphone and the amplifier, on the four pins the panel
- * leaves: 32 and 33 are the bank-1 outputs, 34 is input-only and only ever
- * reads the mic, and 15 is a strapping pin that nothing on the amp pulls at
- * reset. The refresh loop rewrites the whole bank-0 output register, which
- * does not touch a peripheral-routed pin such as 15 but would clobber a
- * software-driven output there, so the amp's SD (mute) pin is tied to 3V3
- * rather than to a GPIO. Wiring in README.md. */
-#define BOARD_AUDIO_PINS { .bclk = 32, .ws = 33, .dout = 15, .din = 34 }
 
 #endif

@@ -37,3 +37,10 @@ Both live in ~/projects/athena/scripts/. The voice bridge is still running in th
 
   The demo can run while the voice bridge is up. The board accepts several Wi-Fi connections, and
   the bridge will overwrite the demo's state on the next conversation turn.
+
+ ./scripts/audio.py play fullpower.wav --gain 20
+ say -o hi.wav --data-format=LEI16@16000 "Hello from Athena" && ./scripts/audio.py play hi.wav
+ ./scripts/audio.py play one_small_step_16k.wav 
+
+ ./scripts/audio.py record 5 take.wav
+ ./scripts/audio.py play take.wav

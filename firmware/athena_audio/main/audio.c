@@ -2,19 +2,21 @@
  * ICS-43434 microphone in, a MAX98357A amplifier out, 16 kHz, 32-bit slots)
  * bridged to one TCP client on AUDIO_TCP_PORT. See audio.h for the stream.
  *
- * Four tasks, all on core 0 because core 1 is the panel's: `audio_rx` reads
- * the microphone, folds its slot to int16 and queues it; `audio_send` drains
- * that queue into the client's socket, so a Wi-Fi stall never holds up the
- * microphone read (the I2S DMA holds only 60 ms, the queue half a second, and
- * beyond that the newest samples are dropped and counted); `audio_tx` drains
- * the playback buffer into the amplifier; `audio_net` accepts the client and
- * fills that buffer, so a Mac that writes faster than real time is simply
- * held back by TCP once the buffer is full.
+ * Four tasks: `audio_rx` reads the microphone, folds its slot to int16 and
+ * queues it; `audio_send` drains that queue into the client's socket, so a
+ * Wi-Fi stall never holds up the microphone read (the I2S DMA holds only
+ * 60 ms, the queue half a second, and beyond that the newest samples are
+ * dropped and counted); `audio_tx` drains the playback buffer into the
+ * amplifier; `audio_net` accepts the client and fills that buffer, so a Mac
+ * that writes faster than real time is simply held back by TCP once the
+ * buffer is full. The I2S pair runs on core 1 and the network pair on core 0
+ * next to Wi-Fi, the split AUDIO-BOARD.md keeps once the AFE joins core 1.
  *
- * No wake word and no echo cancellation live here: the classic ESP32 has
- * neither PSRAM nor a free core for ESP-SR, so this board is the ears and the
- * mouth and the Mac is the brain. AUDIO-BOARD.md is the S3 design that does
- * more on the board.
+ * This is the raw bridge the microphone and the amplifier are brought up
+ * with, stages 2-4 of AUDIO-BOARD.md with the Mac as the meter: no wake word
+ * and no echo cancellation yet, the Mac is the brain. The amp's SD_MODE pin
+ * is driven high once at start (on, left slot); gating it per utterance to
+ * kill the idle hiss comes with the later stages.
  */
 #include <math.h>
 #include <stdlib.h>
@@ -24,6 +26,7 @@
 #include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
+#include "driver/gpio.h"
 #include "driver/i2s_std.h"
 #include "esp_check.h"
 #include "esp_heap_caps.h"
@@ -50,6 +53,8 @@ static const char *TAG = "audio";
 #define AUDIO_KEEPIDLE_S        30
 #define AUDIO_KEEPINTVL_S       10
 #define AUDIO_KEEPCNT           3
+#define AUDIO_I2S_CORE          1       /* audio_rx and audio_tx: the I2S side, AUDIO-BOARD.md's AFE core */
+#define AUDIO_NET_CORE          0       /* audio_send and audio_net, next to Wi-Fi and lwIP */
 
 static i2s_chan_handle_t s_tx, s_rx;
 static StreamBufferHandle_t s_play;         /* int16 mono, net -> tx */
@@ -348,17 +353,28 @@ esp_err_t audio_start(const audio_pins_t *pins)
     ESP_RETURN_ON_ERROR(i2s_channel_enable(s_tx), TAG, "i2s tx enable");
     ESP_RETURN_ON_ERROR(i2s_channel_enable(s_rx), TAG, "i2s rx enable");
 
-    BaseType_t ok = xTaskCreatePinnedToCore(rx_task, "audio_rx", 4096, NULL, 5, NULL, 0);
+    if (pins->sd_mode >= 0) {
+        /* The amp's SD_MODE: high turns it on and, at 3.3 V, selects the left
+         * slot; tx_task writes the same sample to both slots anyway. */
+        gpio_config_t sd = {
+            .pin_bit_mask = 1ULL << pins->sd_mode,
+            .mode = GPIO_MODE_OUTPUT,
+        };
+        ESP_RETURN_ON_ERROR(gpio_config(&sd), TAG, "amp sd_mode pin");
+        ESP_RETURN_ON_ERROR(gpio_set_level((gpio_num_t)pins->sd_mode, 1), TAG, "amp sd_mode high");
+    }
+
+    BaseType_t ok = xTaskCreatePinnedToCore(rx_task, "audio_rx", 4096, NULL, 5, NULL, AUDIO_I2S_CORE);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "audio_rx task");
-    ok = xTaskCreatePinnedToCore(tx_task, "audio_tx", 3072, NULL, 5, NULL, 0);
+    ok = xTaskCreatePinnedToCore(tx_task, "audio_tx", 3072, NULL, 5, NULL, AUDIO_I2S_CORE);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "audio_tx task");
-    ok = xTaskCreatePinnedToCore(send_task, "audio_send", 3072, NULL, 4, NULL, 0);
+    ok = xTaskCreatePinnedToCore(send_task, "audio_send", 3072, NULL, 4, NULL, AUDIO_NET_CORE);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "audio_send task");
-    ok = xTaskCreatePinnedToCore(net_task, "audio_net", 4096, NULL, 4, NULL, 0);
+    ok = xTaskCreatePinnedToCore(net_task, "audio_net", 4096, NULL, 4, NULL, AUDIO_NET_CORE);
     ESP_RETURN_ON_FALSE(ok == pdPASS, ESP_ERR_NO_MEM, TAG, "audio_net task");
 
-    ESP_LOGI(TAG, "i2s bclk %d ws %d dout %d din %d, %d Hz, 32-bit slots, mic slot %c, free heap %u",
-             pins->bclk, pins->ws, pins->dout, pins->din, AUDIO_RATE_HZ, AUDIO_MIC_SLOT ? 'R' : 'L',
+    ESP_LOGI(TAG, "i2s bclk %d ws %d dout %d din %d, sd_mode %d, %d Hz, 32-bit slots, mic slot %c, free heap %u",
+             pins->bclk, pins->ws, pins->dout, pins->din, pins->sd_mode, AUDIO_RATE_HZ, AUDIO_MIC_SLOT ? 'R' : 'L',
              (unsigned)esp_get_free_heap_size());
     return ESP_OK;
 }
