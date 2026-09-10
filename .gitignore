@@ -226,3 +226,5 @@ CLAUDE.local.md
 # Host preview tooling (firmware/athena_matrix/host/): the built binary and its rendered output
 firmware/*/host/aura_host
 firmware/*/host/out/
+
+*.Ds_Store

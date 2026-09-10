@@ -16,7 +16,7 @@ bench setup with separate supplies.
 
 | Item | Detail | Defined in |
 |---|---|---|
-| Panel | Waveshare RGB-Matrix-P3 64×64, HUB75E, VH4 power lead | `RGB-MATRIX.md` |
+| Panel | Waveshare RGB-Matrix-P2 64×64 (128 × 128 × 15 mm), HUB75E, VH4 power lead | `RGB-MATRIX.md` |
 | Matrix MCU | ESP32-S3-DevKitC-1 N16R8, ribbon on J1 per the pin map | `RGB-MATRIX.md` |
 | Audio MCU | ESP32-S3-DevKitC-1 N16R8, I2S on GPIO 5/6/7/15, amp SD on 16 | `AUDIO-BOARD.md` |
 | Mics | 2× ICS-43434 (ozon order) or 2× INMP441 (Almaty stock) | `AUDIO-BOARD.md` |
@@ -186,7 +186,9 @@ speaker leads and the mic wires if the breakouts have no headers.
 
 ## Mechanical layout
 
-- **Panel** on the front face, 192×192 mm, on its own standoffs. Ribbon
+- **Panel** flush in the front opening, 128×128×15 mm, on four corner pads
+  behind it and M3 screws from behind into its own mounting holes
+  (`enclosure/athena_compact.scad` is the current box). Ribbon
   ≤ 30 cm, shorter is better; 15 cm is comfortable with the boards mounted
   directly behind the panel.
 - **Mics** on the front face below the panel, 4–6.5 cm apart on a horizontal

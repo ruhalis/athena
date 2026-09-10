@@ -145,6 +145,8 @@ I (xxx) hub75: R1=23 G1=22 B1=21 R2=19 G2=18 B2=5 A=25 B=26 C=27 D=14 E=13 CLK=1
 I (xxx) serial: UART0 115200 8N1, lines up to 256 bytes
 I (xxx) wifi: station athena-matrix, mdns athena-matrix.local, service _athena-face
 I (xxx) net: listening on tcp port 7075, up to 4 clients
+I (xxx) audio: listening on tcp port 7076: pcm s16le 16000 Hz mono, mic out and speaker in on one connection
+I (xxx) audio: i2s bclk 32 ws 33 dout 15 din 34, 16000 Hz, 32-bit slots, mic slot L, free heap 96540
 I (xxx) athena_matrix: ready: boot mode test, modes: idle listen think work speak alert error sleep test off
 I (xxx) wifi: got ip 10.10.20.93 on <your network>, reachable as athena-matrix.local      (a few seconds later)
 ```
@@ -181,6 +183,97 @@ the colour and the haze behind the ring fade more slowly over 2 s, and `t` fades
 | sleep | a small dim deep-blue ring, low in the panel, drifting slowly, no haze |
 
 `scripts/face.py --demo` walks through all of them, 4 s each.
+
+## Microphone and speaker
+
+The same board is also the ears and the mouth: one I2S port in full duplex
+carries an INMP441 or ICS-43434 microphone in and a MAX98357A amplifier out,
+and `main/audio.c` bridges both to TCP port 7076 as raw PCM. No wake word and
+no echo cancellation run here (the classic ESP32 has neither PSRAM nor a free
+core for ESP-SR): the Mac does that, this board only moves the sound.
+`AUDIO-BOARD.md` is the separate S3 design that does more on the board.
+
+### Wiring
+
+The pins are the four the panel map above leaves free, so the same wiring
+works with or without the matrix attached.
+
+| ESP32 pin | MAX98357A | INMP441 / ICS-43434 | Note |
+|---|---|---|---|
+| GPIO32 | BCLK | SCK | one shared bit clock |
+| GPIO33 | LRC | WS | one shared word select |
+| GPIO15 | DIN | | audio out to the amp |
+| GPIO34 | | SD | audio in from the mic; an input-only pin is fine here |
+| 3V3 | SD | VDD | amp SD high = on, left channel; the mic is 3.3 V only, 5 V kills it |
+| 5V / VIN | VIN | | amp power from the 5 V rail, never from the 3V3 regulator |
+| GND | GND | GND and L/R | one common ground; L/R to GND puts the mic in the left slot |
+
+On the S3 build the four I2S pins are GPIO1 (BCLK), GPIO2 (WS), GPIO14 (DIN
+to the amp) and GPIO21 (SD from the mic), untested.
+
+- **Speaker**: both wires on the amp's screw terminal and nowhere else. The output is bridge-tied, so grounding either wire shorts the amp. 4 Ω or 8 Ω, 3 W.
+- **Amp SD pin** tied to 3V3 means always on, left channel, full level for a mono stream. Left floating, the breakout's own pull-up selects the stereo average and you get half the level (the firmware puts the same sample in both slots, so it still plays). No GPIO is free on the WROOM once the panel is wired, and the refresh loop would clobber a software-driven output in bank 0 anyway, so mute is done by streaming silence.
+- **GAIN** unconnected is 9 dB; to GND 12 dB; to VIN 6 dB; through 100 kΩ to GND 15 dB, to VIN 3 dB.
+- **1000 µF 16 V** across the amp's VIN and GND, stripe leg on GND, within a few centimetres of the amp: the class-D bursts otherwise dip the 5 V rail and reset the ESP32.
+- **Second mic**: same SCK, WS and SD wires, its L/R to 3V3; both mics tri-state SD outside their own slot. `AUDIO_MIC_SLOT` in `main/audio.c` picks the one that is streamed.
+- Keep the mic wires under 15 cm, twisted, away from the speaker leads and the panel ribbon. Wire with USB unplugged and check the mic's VDD is on 3V3 twice.
+
+### The stream
+
+Port 7076, one TCP connection, raw PCM both ways: signed 16-bit
+little-endian, 16 kHz, mono, no framing. From the moment a client connects
+the board sends the microphone; every byte the client writes is played,
+silence when nothing arrives. One client at a time: a second connection is
+closed at once. The microphone never blocks or drops the client: whatever
+the client cannot take right now, because the link stalls or it is busy
+sending playback, is lost and counted on the 5 s log line rather than
+closing the connection. A player should still drain what it receives so its
+own socket buffer does not fill. The face protocol on 7075 is untouched and both ports work at the same time.
+Audio starts only once Wi-Fi is up; without a network there is no audio and
+the face still works over the cable.
+
+On the I2S bus the mic delivers 24 bits MSB-aligned in 32-bit slots. The
+firmware takes the left slot (`AUDIO_MIC_SLOT`), shifts it right by 14 bits
+(`AUDIO_MIC_SHIFT`: 12 dB of gain over the raw top 16 bits) and clamps.
+Playback puts each int16 into the top of both 32-bit slots.
+
+Every 5 s the log shows both slots, which is how a wrong L/R or a dead wire
+shows up:
+
+```
+I (xxx) audio: mic L -42 dBFS (peak -30), R -96 dBFS (peak -96), slot L -> 10.10.20.5:51234
+```
+
+With nothing on GPIO34 the left slot reads floating-pin noise near full
+scale. With a mic in a quiet room expect about -50 dBFS, speech -30 to -20.
+
+### From the Mac
+
+`scripts/audio.py` (standard library only, like `face.py`) is the bench
+client. `--host` (`host` or `host:port`) and `ATHENA_MATRIX_HOST` (its host
+part only, a `:7075` there is the face port) pick the board as for `face.py`,
+`--port` the audio port:
+
+```bash
+scripts/audio.py meter 5             # live mic level bar for 5 s
+scripts/audio.py record 5 take.wav   # 5 s of the mic into a 16 kHz mono wav
+scripts/audio.py tone 440 2          # 2 s of 440 Hz through the speaker
+scripts/audio.py play take.wav       # any 16-bit wav; stereo is averaged, other rates resampled
+```
+
+### If the sound does not work
+
+| Symptom | Look at |
+|---|---|
+| Log shows -96 dBFS in both slots | the mic has no clock or no power: SCK, WS, VDD wires |
+| Mic near full scale with nothing said | SD floating: GPIO34 to the mic's SD; or the streamed slot is the unwired one, flip L/R or `AUDIO_MIC_SLOT` |
+| Level in the log on R, the stream silent | the mic sits in the right slot: L/R is on 3V3, or the breakout labels it the other way; move L/R to GND or set `AUDIO_MIC_SLOT` to 1 |
+| Board resets when sound plays | the 5 V supply sags: the 1000 µF cap, GAIN to VIN, the amp on the 5 V bus instead of the laptop's USB |
+| Hiss that follows the aura | supply or coupling from the panel: shorter mic wires, away from the ribbon, 100 nF at the mic's VDD |
+| `audio.py`: `connection closed by the board`, exit 1 | another client holds port 7076 (the board logs `refused`); `connection refused`, exit 2, is a firmware without audio or a wrong port |
+| `audio.py` exits 3 with "board sent nothing" | the board accepted the connection but its microphone task is not producing: look for `audio: mic` lines in the log |
+| `N samples dropped` in the `audio: mic` line | the network took longer than half a second to accept the stream: Wi-Fi jitter or a client that reads too slowly |
+| `audio unavailable` in the boot log | the I2S port or its pins could not be opened; the line names the step, the face is unaffected |
 
 ## Troubleshooting
 

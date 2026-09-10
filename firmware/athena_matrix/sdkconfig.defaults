@@ -18,3 +18,10 @@ CONFIG_PARTITION_TABLE_SINGLE_APP_LARGE=y
 # Core 1 is the panel's: keep every network task on core 0.
 CONFIG_ESP_WIFI_TASK_PINNED_TO_CORE_0=y
 CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+
+# The audio stream (main/audio.c) pushes 32 kB/s through one TCP socket, and
+# lwIP caps a socket's throughput near send buffer / round-trip time: the
+# default 5760 bytes (4 MSS) fall short on a Wi-Fi link with 100-300 ms
+# spikes. 12 MSS each way; the memory is used only while data is in flight.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=17280
+CONFIG_LWIP_TCP_WND_DEFAULT=17280

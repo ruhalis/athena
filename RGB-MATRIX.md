@@ -1,6 +1,6 @@
 # RGB Matrix Display for Athena
 
-Waveshare **RGB-Matrix-P3 64×64** (HUB75E) driven by an **ESP32-S3-DevKitC-1** that the Mac reaches over **Wi-Fi** (`athena-matrix.local`, TCP port 7075) or, with a cable, over **USB serial**. Either way the Mac writes one JSON line per state change and the board renders. Wi-Fi needs the network's name and password in a gitignored header (see "Wi-Fi" at the end of this file); the cable needs nothing and stays as the fallback and the boot console.
+Waveshare **RGB-Matrix-P2 64×64** (HUB75E, 128 × 128 mm) driven by an **ESP32-S3-DevKitC-1** that the Mac reaches over **Wi-Fi** (`athena-matrix.local`, TCP port 7075) or, with a cable, over **USB serial**. Either way the Mac writes one JSON line per state change and the board renders. Wi-Fi needs the network's name and password in a gitignored header (see "Wi-Fi" at the end of this file); the cable needs nothing and stays as the fallback and the boot console.
 
 Status: design for the S3 build. `firmware/athena_matrix/` currently holds a **bit-banged prototype** with its own `hub75` component; it builds for the WROOM-32 with its own pin map and for the ESP32-S3 with the pin map below (see `firmware/athena_matrix/README.md`). The driver submodule is declared in `.gitmodules` but not checked out. The protocol below is implemented in that prototype (`main/command.c` assembles and validates lines, `main/serial.c` and `main/net.c` are the two transports, `main/face.c` renders, `main/protocol.h` names the states) and runs on both targets; Wi-Fi and mDNS come from the shared `firmware/components/athena_common/`.
 
@@ -18,7 +18,7 @@ Two cables reach the DevKit (USB for power, ribbon to the panel) and one reaches
 
 | Part | Choice | Notes |
 |---|---|---|
-| Panel | Waveshare RGB-Matrix-P3-64x64 | 192 × 192 mm, 4096 LEDs, 3 mm pitch, 1/32 scan, HUB75E in and out headers, ≤ 20 W |
+| Panel | Waveshare RGB-Matrix-P2-64x64 | 128 × 128 × 15 mm, 4096 LEDs, 2 mm pitch, 1/32 scan, HUB75E in and out headers, ≤ 20 W |
 | MCU | ESP32-S3-DevKitC-1 **N16R8** | same module as the audio board; PSRAM is unused here, the DMA buffers live in internal RAM |
 | Ribbon | 16-pin 2×8 IDC ribbon | ships with the panel; keep it under 30 cm |
 | Breakout | 2×8 IDC breakout or 15 Dupont jumper wires | an adapter board wired to the pin map below saves the jumpers but is not required |
