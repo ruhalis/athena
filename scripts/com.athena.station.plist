@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  The voice station on the office Mac mini (scripts/station.py): the ESP32
+  audio board's mic -> the Hermes gateway's STT -> hermes_core (Burabai) ->
+  the Hermes TTS server -> the board's speaker, state on the LED face.
+  Paths are the mini's (user delphi, clone ~/athena-face from the face-plugin
+  branch, the Burabai code in ~/burabai-station). Homebrew's python3 is the
+  one with openai and httpx, which hermes_core needs.
+
+  Install / update:
+    cp ~/athena-face/scripts/com.athena.station.plist ~/Library/LaunchAgents/
+    launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.athena.station.plist
+  Restart after a pull:  launchctl kickstart -k gui/$(id -u)/com.athena.station
+  Stop for good:         launchctl bootout gui/$(id -u)/com.athena.station
+  Log:                   ~/.hermes/logs/athena-station.log
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.athena.station</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>/Users/delphi/athena-face/scripts/station.py</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/Users/delphi/athena-face</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>ATHENA_MATRIX_HOST</key>
+    <string>athena-matrix.local</string>
+    <key>ATHENA_AUDIO_HOST</key>
+    <string>athena-audio.local</string>
+    <key>SITE_BASE_URL</key>
+    <string>http://127.0.0.1:9001</string>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>10</integer>
+  <key>ProcessType</key>
+  <string>Interactive</string>
+  <key>StandardOutPath</key>
+  <string>/Users/delphi/.hermes/logs/athena-station.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/delphi/.hermes/logs/athena-station.log</string>
+</dict>
+</plist>
