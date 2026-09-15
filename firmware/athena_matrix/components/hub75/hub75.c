@@ -3,10 +3,15 @@
  * Timing per (row, plane) window:
  *   1. OE high (blank), address lines = row, LAT pulse: the data that the
  *      previous window shifted in is now on the LEDs of this row pair.
- *   2. Shift the NEXT window's 64 columns, (1 << plane) times over, with OE
- *      low for the first `brightness` fraction of those clocks and high for
- *      the rest. Re-shifting the same 64 columns is harmless: the shift
- *      register is exactly one row wide, so only the last pass matters.
+ *   2. Shift the NEXT window's 64 columns, as many passes as the window
+ *      needs, with OE low for the plane's lit clocks (LSB_CLOCKS << plane,
+ *      scaled by `brightness`) and high for the rest. Re-shifting the same
+ *      64 columns is harmless: the shift register is exactly one row wide,
+ *      so only the last pass matters.
+ * A window is max(64, LSB_CLOCKS << plane) clocks. The short planes are lit
+ * for less than one shift and sit dark for the rest of it, which is what
+ * keeps the refresh rate up: at 5 planes a row pair costs 64 + 64 + 64 +
+ * 128 + 256 = 576 clocks, where 64-clock planes would cost 64 x 31 = 1984.
  * Every clock costs two writes to GPIO_OUT_REG (data with CLK low, then the
  * same word with CLK high), so a window is a fixed number of identical steps
  * and plane weights are exact powers of two.
@@ -34,6 +39,7 @@ static const char *TAG = "hub75";
 #define PLANE_BYTES         (HUB75_ROWS * HUB75_WIDTH)              /* one plane: 32 rows x 64 columns */
 #define PLANE_OFFSET(p, r)  ((((p) * HUB75_ROWS) + (r)) * HUB75_WIDTH)
 #define COLOUR_WORDS        64                                       /* 6 colour bits -> 64 GPIO words */
+#define LSB_CLOCKS          16                                       /* plane 0 lit time; plane p gets LSB_CLOCKS << p */
 #define FPS_SAMPLE_FRAMES   64
 #define PIN_COUNT           14
 
@@ -147,9 +153,12 @@ static void IRAM_ATTR refresh_task(void *arg)
                 REG_WRITE(GPIO_OUT_REG, base | oe);
                 esp_rom_delay_us(1);        /* let the row drivers settle before lighting: no ghost row */
 
-                /* Window: (64 << plane) clocks, OE low for the brightness fraction. */
-                const uint32_t total = HUB75_WIDTH << plane;
-                const uint32_t on = (total * bright) >> 8;
+                /* Window: long enough for one 64-column shift and for this plane's
+                 * (LSB_CLOCKS << plane) lit clocks; OE low for the brightness
+                 * fraction of those, rounded so dim levels keep their weights. */
+                const uint32_t lit = LSB_CLOCKS << plane;
+                const uint32_t total = lit > HUB75_WIDTH ? lit : HUB75_WIDTH;
+                const uint32_t on = (lit * bright + 128) >> 8;
                 int idx = shift_run(next, 0, on, base);
                 shift_run(next, idx, total - on, base | oe);
             }

@@ -26,6 +26,7 @@ static const char *TAG = "face";
 #define BLINK_MIN_MS    3000        /* re-armed by set_mode; the aura has no blink */
 #define BLINK_MAX_MS    5000
 #define TEXT_Y          29          /* `t` in the centre of the ring, 5x7 font */
+#define REFRESH_LOG_US  5000000     /* how often the panel's measured refresh rate is logged */
 
 typedef struct {
     QueueHandle_t queue;
@@ -37,6 +38,7 @@ typedef struct {
     int64_t next_blink_us;          /* set by set_mode, not read by the aura */
     int64_t blink_until_us;
     int64_t mouth_step_us;
+    int64_t refresh_log_us;         /* last refresh-rate log line */
     uint32_t prng;
 } face_state_t;
 
@@ -172,6 +174,10 @@ static void render_task(void *arg)
         if (s.expiry_us && s.now_us >= s.expiry_us) {
             ESP_LOGI(TAG, "mode %s expired", face_mode_name(s.mode));
             set_mode(FACE_MODE_IDLE, 0);                /* `t` survives the fallback */
+        }
+        if (s.now_us - s.refresh_log_us >= REFRESH_LOG_US) {
+            s.refresh_log_us = s.now_us;
+            ESP_LOGI(TAG, "refresh %d Hz", (int)hub75_refresh_hz());
         }
 
         hub75_clear();

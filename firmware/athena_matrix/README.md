@@ -3,8 +3,8 @@
 Pure ESP-IDF firmware for the Waveshare 64×64 P3 HUB75E panel, written from
 scratch: no Arduino, no third-party matrix library. The classic ESP32 has no
 LCD_CAM peripheral, so the panel is refreshed by a tight GPIO loop on core 1
-(binary code modulation, 5 bit planes per colour, roughly 100–150 Hz). The same
-loop also runs on the ESP32-S3-DevKitC-1 as the bring-up path until the DMA
+(binary code modulation, 5 bit planes per colour, the measured rate logged
+every 5 s as `face: refresh N Hz`). The same loop also runs on the ESP32-S3-DevKitC-1 as the bring-up path until the DMA
 driver from `RGB-MATRIX.md` is wired in. `main/` is the Athena face: `serial.c`
 reads one JSON line per state from UART0 (the USB bridge) and `net.c` the same
 lines from TCP port 7075 over Wi-Fi (the board answers as `athena-matrix.local`;
@@ -193,7 +193,7 @@ the colour and the haze behind the ring fade more slowly over 2 s, and `t` fades
 | Rows scrambled or repeated | A–D wires, one per address bit |
 | Panel dark although wiring is right | FM6126A driver chip: set `cfg.driver = HUB75_DRIVER_FM6126A` in `main.c` |
 | Faint ghost of the row above | ribbon too long; try a 74HCT245 |
-| Flicker | check the log: refresh under 100 Hz means the loop is starved; drop `color_depth` to 4 |
+| Flicker | check the `face: refresh N Hz` line: under 100 Hz means the loop is starved; drop `color_depth` to 4 |
 | ESP32 resets when the panel goes bright | supply sag or a missing common ground |
 | `Resource busy` on the port | another monitor holds it; close it, or talk to the board over Wi-Fi |
 | No `wifi: got ip` line, `disconnected (reason …)` repeats | the reason's hint in the log: no AP with that name in range (2.4 GHz only), or a wrong password; fix `athena_secrets.h`, rebuild, flash |
@@ -215,11 +215,18 @@ the colour and the haze behind the ring fade more slowly over 2 s, and `t` fades
 - The refresh loop writes the whole `GPIO_OUT` register for each pixel clock
   (data with CLK low, then CLK high). That is why every pin must be in bank 0
   and why no other code may drive a GPIO in 0..31 while the panel runs.
-- Plane *p* is shown for `64 << p` clocks, re-shifting the same 64 columns;
-  the shift register is one row wide so only the last pass matters, and the
-  weights come out as exact powers of two with no timer.
-- Brightness is the fraction of each window with OE low, so it does not cost
-  colour depth.
+- Plane *p* is lit for `16 << p` clocks inside a window of `max(64, 16 << p)`
+  clocks, re-shifting the same 64 columns as often as the window needs; the
+  shift register is one row wide so only the last pass matters, and the
+  weights come out as exact powers of two with no timer. Planes 0 to 2 are
+  lit for less than one shift and stay dark for the rest of it: a row pair
+  costs 576 clocks (496 of them lit) instead of 1984 (all lit), plus a fixed
+  1 µs settle per window, so the panel refreshes roughly three times as often
+  for 15–20 % less light: 458 Hz measured on the WROOM at 5 planes
+  (2026-09-15), steady with Wi-Fi up. That shrinks the bands a fast phone
+  shutter catches, which were two thick slanted bars at 64-clock planes.
+- Brightness is the fraction of each plane's lit time with OE low, rounded
+  to whole clocks, so it does not cost colour depth.
 - The refresh task never blocks, so `sdkconfig.defaults` turns off the idle-task
   watchdog check for core 1.
 - The ESP32-S3 build uses the driver unchanged with a pin map that keeps every

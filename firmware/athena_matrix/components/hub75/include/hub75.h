@@ -5,9 +5,10 @@
  *
  * Model
  *   - One FreeRTOS task, pinned to a core, owns the panel and never blocks.
- *   - Binary code modulation: colour bit plane p is lit for (64 << p) pixel
- *     clocks, so its weight is exactly 2^p with no timer involved.
- *   - Brightness is the fraction of each plane window during which OE is low.
+ *   - Binary code modulation: colour bit plane p is lit for (16 << p) pixel
+ *     clocks, so its weight is exactly 2^p with no timer involved. A plane
+ *     shorter than one 64-column shift sits dark for the rest of that shift.
+ *   - Brightness is the fraction of each plane's lit time during which OE is low.
  *   - Drawing goes to an RGB888 back buffer; hub75_present() packs it into
  *     bit planes and hands it over at the next frame boundary.
  *
@@ -43,7 +44,7 @@ typedef struct {
 
 typedef struct {
     hub75_pins_t pins;
-    uint8_t color_depth;        /* bit planes per channel, 1..8. 5 gives ~150 Hz on a 240 MHz ESP32 */
+    uint8_t color_depth;        /* bit planes per channel, 1..8; 5 gives 458 Hz on a 240 MHz ESP32 (576 clocks a row pair, 320 at 4) */
     uint8_t brightness;         /* initial brightness, 0..255 */
     float gamma;                /* 0 means 2.2 */
     hub75_driver_t driver;
