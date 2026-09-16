@@ -4,11 +4,14 @@ Pure ESP-IDF firmware for the Athena audio board, the ears and the mouth
 designed in `AUDIO-BOARD.md`. What runs today is the **raw bridge** that
 brings the hardware up, stages 2–4 of that note with the Mac as the meter:
 one I2S port in full duplex carries the microphone in and the amplifier out,
-and `main/audio.c` bridges both to TCP port 7076 as raw PCM. No wake word, no
-echo cancellation and no hub protocol yet: the board moves sound and the Mac
-is the brain. `scripts/audio.py` is the bench client (`scripts/voice.py` still
-uses the Mac's own microphone and speakers). ESP-SR and the WebSocket hub
-protocol are the later stages of the design note. The board answers as
+and `main/audio.c` bridges both to TCP port 7076 as raw PCM. Since stage 5
+the same microphone also feeds ESP-SR's audio front end in `main/sr.c`: the
+wake word **"Hi, ESP"** and a VAD, their detections on the console and
+nowhere else yet. No echo cancellation and no hub protocol: the board moves
+sound and hears the wake word, the Mac is still the brain. `scripts/audio.py`
+is the bench client (`scripts/voice.py` still uses the Mac's own microphone
+and speakers). The WebSocket hub protocol is stage 6 of the design note. The
+board answers as
 `athena-audio.local`; the network's name and password come from
 `../components/athena_common/include/athena_secrets.h`, shared with the
 matrix (see Build).
@@ -51,9 +54,13 @@ idf.py -p /dev/cu.usbmodemXXXXXXXX flash       # the native USB connector; /dev/
 idf.py -p /dev/cu.usbmodemXXXXXXXX monitor     # leave with Ctrl+]
 ```
 
-`partitions.csv` is the table from `AUDIO-BOARD.md`, with the 6 MB `model`
-partition ESP-SR will use, so a board flashed today is not re-partitioned
-later.
+`partitions.csv` is the table from `AUDIO-BOARD.md`; the 6 MB `model`
+partition holds the ESP-SR models. The esp-sr component (a registry
+dependency in `main/idf_component.yml`, fetched into `managed_components/`
+on the first build) packs the models selected in `sdkconfig.defaults` into
+`build/srmodels/srmodels.bin`, and `idf.py flash` writes it to that
+partition along with the app. `idf.py app-flash` does not, so a board whose
+model partition is still empty needs one full `flash`.
 
 Boot log to expect:
 
@@ -61,9 +68,16 @@ Boot log to expect:
 I (xxx) wifi: station athena-audio, mdns athena-audio.local, service _athena-audio
 I (xxx) audio: listening on tcp port 7076: pcm s16le 16000 Hz mono, mic out and speaker in on one connection
 I (xxx) audio: i2s bclk 5 ws 6 dout 15 din 7, sd_mode 16, 16000 Hz, 32-bit slots, mic slot L, free heap NNNNNN
-I (xxx) athena_audio: ready: athena-audio.local, mic out and speaker in on tcp port 7076
+I (xxx) sr: model 0: wn9_hiesp (...)
+I (xxx) sr: model 1: vadnet1_medium (...)
+I (xxx) sr: [input] -> |...| -> |WakeNet(wn9_hiesp)| -> [output]          (the AFE's own pipeline line)
+I (xxx) sr: wake word "Hi,ESP", vad vadnet1_medium (speech >= 128 ms, silence >= 600 ms, floor -60 dBFS), feed 512 samples, free heap NNNNNN
+I (xxx) athena_audio: ready: athena-audio.local, mic out and speaker in on tcp port 7076, wake word and vad on this console
 I (xxx) wifi: got ip 10.10.20.94 on <your network>, reachable as athena-audio.local      (a few seconds later)
 ```
+
+`speech front end unavailable: ESP_ERR_NOT_FOUND` in place of the `sr:` lines
+means the model partition is empty; the bridge still runs.
 
 ## The stream
 
@@ -79,9 +93,13 @@ own socket buffer does not fill. Without a network there is nothing: the
 board has no serial protocol, only its log.
 
 On the I2S bus the mic delivers 24 bits MSB-aligned in 32-bit slots. The
-firmware takes the left slot (`AUDIO_MIC_SLOT`), shifts it right by 14 bits
-(`AUDIO_MIC_SHIFT`: 12 dB of gain over the raw top 16 bits) and clamps.
-Playback puts each int16 into the top of both 32-bit slots.
+firmware takes the left slot (`AUDIO_MIC_SLOT`), shifts it right by 12 bits
+(`AUDIO_MIC_SHIFT`: 24 dB of gain over the raw top 16 bits) and clamps.
+The gain was 12 dB until stage 5 showed WakeNet needs speech near -20 dBFS:
+at 12 dB a normal voice at a metre read -25 to -32 dBFS and the phrase only
+fired at -19, so the shift went from 14 to 12, and the same 12 dB applies to
+the stream on port 7076. Playback puts each int16 into the top of both
+32-bit slots.
 
 Every 5 s the log shows both slots, which is how a wrong L/R or a dead wire
 shows up:
@@ -92,8 +110,46 @@ I (xxx) audio: mic L -42 dBFS (peak -30), R -96 dBFS (peak -96), slot L -> 10.10
 
 With nothing wired to GPIO7 both slots read a flat -90 to -96 dBFS (the pin
 sits at a fixed level, unlike the WROOM's floating GPIO34), so that reading
-alone does not tell a missing mic from an unclocked one. With a mic in a quiet room
-expect about -50 dBFS, speech -30 to -20.
+alone does not tell a missing mic from an unclocked one. With one mic and
+the 24 dB gain expect about -26 dBFS RMS in an open office, speech peaks
+around -10; with one mic the right slot reads about the same as the left,
+because the data line floats during the slot nobody drives, and that is
+harmless, only the left slot is used.
+
+## Wake word and VAD
+
+`main/sr.c` runs ESP-SR's audio front end (AFE) in low-cost mode on the
+microphone blocks `audio_rx` produces, the same int16 the client gets:
+WakeNet 9 with the `wn9_hiesp` model (the phrase is "Hi, ESP") and VADNet
+for the speech boundaries, plus the noise suppression and gain control the
+AFE enables on its own. One mic and no reference channel today
+(`SR_INPUT_FORMAT "M"`), so no echo cancellation: that is stage 7, with the
+TX ring as the reference. Detections go to the console:
+
+```
+I (xxx) sr: wake #3: "Hi,ESP" (word 1 of model 1, -19 dBFS)
+I (xxx) sr: vad: speech at -31 dBFS, 128 ms cached
+I (xxx) sr: vad: silence after 1.8 s of speech
+I (xxx) sr: 1 wakes (3 since boot), speech 14% of 156 frames, -47 dBFS, ring 94% free
+```
+
+The 5 s summary is the stage 5 checkpoint: leave the TV or a podcast on for
+an evening and read `N since boot` in the morning; every one of those is a
+false accept. The VAD line's hangover is `SR_VAD_MIN_NOISE_MS` (600 ms, the
+design note's `speech_end` delay); `vad: speech` needs `SR_VAD_MIN_SPEECH_MS`
+of speech above the AFE's energy floor (-60 dBFS by default, printed at
+boot), so a mic that reads quieter than that in the `audio: mic` line never
+triggers it. The `N ms cached` on a speech edge is the head of the utterance
+the detector's delay cut off; the AFE hands it back so stage 6 can send it
+uplink first. Nothing acts on a detection yet: no state machine, no face, no
+uplink. The cleaned mono chunk the AFE returns is dropped; port 7076 still
+carries the raw microphone.
+
+Another phrase is another `CONFIG_SR_WN_*` line in `sdkconfig.defaults`
+(the symbol is the model folder in upper case; the list with the phrases is
+`managed_components/espressif__esp-sr/wakeword_list.md`), then `rm sdkconfig`,
+`idf.py reconfigure`, `idf.py flash`. "Hey Athena" is not in the list; that
+is stage 8, a trained model.
 
 ## From the Mac
 
@@ -128,6 +184,11 @@ scripts/audio.py play --gain 20 say.wav     # a brick-wall limiter in effect (~4
 | `audio.py` exits 3 with "board sent nothing" | the board accepted the connection but its microphone task is not producing: look for `audio: mic` lines in the log |
 | `N samples dropped` in the `audio: mic` line | the network took longer than half a second to accept the stream: Wi-Fi jitter or a client that reads too slowly |
 | `audio unavailable` in the boot log | the I2S port, the SD_MODE pin or their GPIOs could not be opened; the line names the step |
+| `speech front end unavailable: ESP_ERR_NOT_FOUND` | the `model` partition is empty: `idf.py flash`, not `app-flash`, writes `srmodels.bin` |
+| `speech front end unavailable: ESP_ERR_NOT_SUPPORTED` | `SR_INPUT_FORMAT` names more channels than `sr_feed()` carries; `sr.c` says which |
+| No `wake` line for the phrase | say it as three letters, "Hi, E-S-P", at 1–2 m; the `vad: speech` line's dBFS should be about -20 or louder (the first detection on the bench needed -19; -25 and quieter missed, which is why the mic gain is 24 dB); a `ring N% free` near 0 or `fetch errors` in the summary means the AFE is starved, look at the mic and the dropped count |
+| `vad: speech` never appears | the mic is too quiet for the -60 dBFS floor: `AUDIO_MIC_SHIFT` in `audio.c`, or the mic's GAIN; or the mic slot is the unwired one |
+| Wakes with nobody speaking | count them on the `since boot` number; the fix is a stricter mode or threshold in `sr.c` (`set_wakenet_threshold`), or the second mic and AEC of the later stages |
 
 ## Design notes
 
@@ -138,6 +199,13 @@ scripts/audio.py play --gain 20 say.wav     # a brick-wall limiter in effect (~4
 - `audio_rx` and `audio_tx` run on core 1, `audio_send` and `audio_net` on
   core 0 with Wi-Fi and lwIP; that is the core split the design note keeps
   when the AFE arrives.
-- `sdkconfig.defaults` is the design note's starter without the ESP-SR keys;
-  the TCP send and receive buffers are raised to 12 MSS because lwIP caps a
-  socket near buffer / round-trip time and the stream is 32 kB/s.
+- `sr.c` sits behind a half-second queue rather than feeding the AFE from
+  `audio_rx` directly: `afe->feed` copies into the AFE's own ring and can
+  wait when the models fall behind, and the microphone read must never wait.
+  The AFE's task and both `sr_*` tasks are on core 1 with the I2S pair, the
+  AFE one notch above them so the models keep up with the microphone.
+- `sdkconfig.defaults` is the design note's starter, including the ESP-SR
+  model keys, QIO flash and the bigger caches (the models are read from
+  flash in place); the TCP send and receive buffers are raised to 12 MSS
+  because lwIP caps a socket near buffer / round-trip time and the stream
+  is 32 kB/s.

@@ -1,0 +1,7 @@
+## IDF Component Manager manifest for `main`. ESP-SR (the AFE, WakeNet and
+## VADNet behind main/sr.c) comes from the registry; the exact version is in
+## ../dependencies.lock, committed, so every machine builds the same one.
+dependencies:
+  idf:
+    version: '>=5.0'
+  espressif/esp-sr: '^2.5.3'

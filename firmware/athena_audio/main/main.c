@@ -1,16 +1,18 @@
 /* Athena audio: the ears and the mouth. app_main joins the network, then
  * audio_start() opens the I2S port and starts the four `audio_*` tasks that
  * bridge the microphone and the amplifier to TCP port AUDIO_TCP_PORT
- * (audio.h; the Mac end is scripts/audio.py). This is the raw bridge that
- * brings the hardware up, stages 2-4 of AUDIO-BOARD.md with the Mac as the
- * meter: no wake word, no echo cancellation and no hub protocol yet, the
- * board moves sound and the Mac is the brain.
+ * (audio.h; the Mac end is scripts/audio.py), then sr_start() puts ESP-SR's
+ * audio front end on the same microphone: the wake word and the VAD, their
+ * detections on this console (sr.h; stage 5 of AUDIO-BOARD.md). No echo
+ * cancellation and no hub protocol yet: the board moves sound and hears
+ * the wake word, the Mac is still the brain.
  */
 #include "esp_log.h"
 
 #include "athena_wifi.h"
 #include "audio.h"
 #include "board_pins.h"
+#include "sr.h"
 
 static const char *TAG = "athena_audio";
 
@@ -38,5 +40,14 @@ void app_main(void)
         ESP_LOGE(TAG, "audio unavailable: %s", esp_err_to_name(err));
         return;
     }
-    ESP_LOGI(TAG, "ready: %s.local, mic out and speaker in on tcp port %d", HOSTNAME, AUDIO_TCP_PORT);
+
+    /* The wake word and the VAD listen to the same microphone. Without the
+     * models in the `model` partition they are absent, not fatal: the raw
+     * bridge is still the Mac's bench. */
+    err = sr_start();
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "speech front end unavailable: %s; raw bridge only", esp_err_to_name(err));
+    }
+    ESP_LOGI(TAG, "ready: %s.local, mic out and speaker in on tcp port %d, wake word and vad on this console",
+             HOSTNAME, AUDIO_TCP_PORT);
 }

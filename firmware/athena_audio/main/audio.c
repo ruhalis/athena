@@ -9,12 +9,14 @@
  * dropped and counted); `audio_tx` drains the playback buffer into the
  * amplifier; `audio_net` accepts the client and fills that buffer, so a Mac
  * that writes faster than real time is simply held back by TCP once the
- * buffer is full. The I2S pair runs on core 1 and the network pair on core 0
- * next to Wi-Fi, the split AUDIO-BOARD.md keeps once the AFE joins core 1.
+ * buffer is full. The I2S pair runs on core 1 next to the AFE (sr.c), the
+ * network pair on core 0 next to Wi-Fi, the split AUDIO-BOARD.md asks for.
+ * `audio_rx` also hands every block to sr_feed(), so the wake word and the
+ * VAD hear exactly what the client gets.
  *
  * This is the raw bridge the microphone and the amplifier are brought up
- * with, stages 2-4 of AUDIO-BOARD.md with the Mac as the meter: no wake word
- * and no echo cancellation yet, the Mac is the brain. The amp's SD_MODE pin
+ * with, stages 2-4 of AUDIO-BOARD.md with the Mac as the meter: no echo
+ * cancellation yet and the Mac is still the brain. The amp's SD_MODE pin
  * is driven high once at start (on, left slot); gating it per utterance to
  * kill the idle hiss comes with the later stages.
  */
@@ -36,6 +38,7 @@
 #include "lwip/sockets.h"
 
 #include "audio.h"
+#include "sr.h"
 
 static const char *TAG = "audio";
 
@@ -46,7 +49,10 @@ static const char *TAG = "audio";
 #define AUDIO_MIC_BUF_MS        500     /* microphone waiting for a slow network; beyond it the newest samples are dropped */
 #define AUDIO_MIC_BUF_BYTES     (AUDIO_RATE_HZ * 2 * AUDIO_MIC_BUF_MS / 1000)
 #define AUDIO_MIC_SLOT          0       /* 0 = left slot (mic L/R to GND), 1 = right (L/R to 3V3); the log shows both */
-#define AUDIO_MIC_SHIFT         14      /* 32-bit MSB-aligned mic word to int16: >>16 is unity, every bit less is +6 dB */
+#define AUDIO_MIC_SHIFT         12      /* 32-bit MSB-aligned mic word to int16: >>16 is unity, every bit less is +6 dB.
+                                         * +24 dB: at 14 (+12 dB) speech at a metre sat at -25..-32 dBFS and WakeNet
+                                         * only fired at -19; at 12 the open office floor is about -26 dBFS RMS and
+                                         * a raised voice up close clips, which the clamp below takes */
 #define AUDIO_SEND_TIMEOUT_MS   2000    /* a client that stops reading the mic this long is dropped, not waited for */
 #define AUDIO_LOG_PERIOD_US     (5 * 1000 * 1000)
 #define AUDIO_BACKLOG           1
@@ -134,6 +140,7 @@ static void rx_task(void *arg)
             pcm[i] = (int16_t)v;
         }
         count += frames;
+        sr_feed(pcm, frames);           /* the AFE (sr.c) hears the same block the client gets; a no-op until sr_start() */
         if (s_client >= 0 && !s_gone) {
             /* Never wait for the network here: the DMA behind this read holds
              * 60 ms. What the queue cannot take is lost and counted. */

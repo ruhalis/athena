@@ -1,7 +1,12 @@
 # ESP32-S3-DevKitC-1 N16R8 only: 16 MB flash, 8 MB octal PSRAM, CPU at 240 MHz.
-# The AUDIO-BOARD.md starter minus the ESP-SR keys, which come with stage 5.
+# The AUDIO-BOARD.md starter. QIO and the bigger caches are for the models
+# ESP-SR maps straight from flash.
 CONFIG_IDF_TARGET="esp32s3"
+CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESP32S3_INSTRUCTION_CACHE_32KB=y
+CONFIG_ESP32S3_DATA_CACHE_64KB=y
+CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
 CONFIG_SPIRAM=y
 CONFIG_SPIRAM_MODE_OCT=y
@@ -11,6 +16,14 @@ CONFIG_SPIRAM_SPEED_80M=y
 # partition ESP-SR needs later does not mean re-partitioning a flashed board.
 CONFIG_PARTITION_TABLE_CUSTOM=y
 CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# ESP-SR (stage 5, main/sr.c): the wake word and the VAD model. The esp-sr
+# component packs whatever is selected here into build/srmodels/srmodels.bin
+# and `idf.py flash` writes it to the `model` partition; the models are read
+# from flash in place (CONFIG_MODEL_IN_FLASH, the default). Another phrase is
+# another CONFIG_SR_WN_* line, see managed_components/espressif__esp-sr/wakeword_list.md.
+CONFIG_SR_WN_WN9_HIESP=y
+CONFIG_SR_VADN_VADNET1_MEDIUM=y
 
 # The audio stream (main/audio.c) pushes 32 kB/s through one TCP socket, and
 # lwIP caps a socket's throughput near send buffer / round-trip time: the
