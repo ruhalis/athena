@@ -10,6 +10,10 @@ Both live in ~/projects/athena/scripts/. The voice bridge is still running in th
   Useful variants:
 
   ./scripts/voice.py --voice cedar --vad semantic   # different voice, smarter turn-taking
+  ./scripts/voice.py --voice cedar --audio board    # the ESP32 audio board's mic and speaker over Wi-Fi instead of the Mac's
+  ./scripts/voice.py --audio board --gain 12        # louder on the board's speaker (default 6 dB, clips at full scale)
+  ./scripts/voice.py --greet                        # she says hello first (default: she waits for you)
+  ./scripts/voice.py --language auto                # any language (default: Russian only)
   ./scripts/voice.py --barge-in                     # with headphones: interrupt her mid-sentence
   ./scripts/voice.py --no-face                      # without the matrix
   ./scripts/voice.py --list-devices                 # pick a mic/speaker with --input / --output

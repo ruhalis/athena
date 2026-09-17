@@ -13,9 +13,10 @@ An empty object `{}` is a ping and answers `ok`.
 
 Target resolution order: --host, --port, $ATHENA_MATRIX_HOST (host[:port]),
 $ATHENA_MATRIX_PORT, the `## Boards` section of ../CLAUDE.md (first existing
-`matrix*` device), a lone /dev/cu.usbserial-*/usbmodem* match, and finally
-athena-matrix.local over Wi-Fi. So a board on USB wins when one is plugged
-in; set ATHENA_MATRIX_HOST to insist on Wi-Fi.
+`matrix*` device), a lone /dev/cu.usbserial-*/usbmodem* match (a port that
+section gives to another board, the audio board on USB, does not count), and
+finally athena-matrix.local over Wi-Fi. So a board on USB wins when one is
+plugged in; set ATHENA_MATRIX_HOST to insist on Wi-Fi.
 """
 
 import argparse
@@ -64,8 +65,8 @@ class FaceError(Exception):
 def now_hhmm():
     return datetime.now().strftime("%H:%M")
 
-def _board_candidates():
-    """Yield device paths for `matrix*` entries in CLAUDE.md's Boards section, in file order."""
+def _boards():
+    """Yield (name, device path) for the entries in CLAUDE.md's Boards section, in file order."""
     try:
         with open(CLAUDE_MD, "r") as f:
             text = f.read()
@@ -76,8 +77,8 @@ def _board_candidates():
         return
     for line in m.group(1).splitlines():
         entry = re.match(r"^([a-zA-Z0-9_-]+):\s*(/dev/cu\.\S+)", line.strip())
-        if entry and entry.group(1).startswith("matrix"):
-            yield entry.group(2)
+        if entry:
+            yield entry.group(1), entry.group(2)
 
 def parse_host(spec):
     """'host' or 'host:port' -> (host, port)."""
@@ -101,10 +102,13 @@ def find_target(port=None, host=None):
     env = os.environ.get("ATHENA_MATRIX_PORT")
     if env:
         return "serial", env
-    for dev in _board_candidates():
-        if os.path.exists(dev):
+    boards = list(_boards())
+    for name, dev in boards:
+        if name.startswith("matrix") and os.path.exists(dev):
             return "serial", dev
-    candidates = sorted(glob.glob("/dev/cu.usbserial-*") + glob.glob("/dev/cu.usbmodem*"))
+    # A port that section gives to another board (the audio board on USB) is not a face.
+    others = set(dev for name, dev in boards if not name.startswith("matrix"))
+    candidates = sorted(set(glob.glob("/dev/cu.usbserial-*") + glob.glob("/dev/cu.usbmodem*")) - others)
     if len(candidates) == 1:
         return "serial", candidates[0]
     if len(candidates) > 1:
@@ -144,8 +148,10 @@ class Face:
     def _open_tcp(self, host, port):
         self.where = "%s:%d" % (host, port)
         try:
-            # .local names resolve through Bonjour; a first lookup can take a few seconds.
-            sock = socket.create_connection((host, port), timeout=max(self.timeout, 5.0))
+            # .local names resolve through Bonjour; a first lookup can take a few seconds. IPv4 only: the
+            # board has no AAAA record, and macOS holds the answer 5 s waiting for one.
+            addr = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)[0][4]
+            sock = socket.create_connection(addr, timeout=max(self.timeout, 5.0))
         except socket.gaierror as e:
             raise FaceError("cannot resolve %s: %s (is the board on this Wi-Fi? its IP is in its boot log; "
                             "set ATHENA_MATRIX_HOST=<ip> to skip mDNS)" % (host, e), code=2)

@@ -9,8 +9,9 @@ the same microphone also feeds ESP-SR's audio front end in `main/sr.c`: the
 wake word **"Hi, ESP"** and a VAD, their detections on the console and
 nowhere else yet. No echo cancellation and no hub protocol: the board moves
 sound and hears the wake word, the Mac is still the brain. `scripts/audio.py`
-is the bench client (`scripts/voice.py` still uses the Mac's own microphone
-and speakers). The WebSocket hub protocol is stage 6 of the design note. The
+is the bench client, and `scripts/voice.py --audio board` talks to the OpenAI
+Realtime API through this board's microphone and speaker instead of the Mac's
+(half-duplex, since nothing cancels the echo yet). The WebSocket hub protocol is stage 6 of the design note. The
 board answers as
 `athena-audio.local`; the network's name and password come from
 `../components/athena_common/include/athena_secrets.h`, shared with the

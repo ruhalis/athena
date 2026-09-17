@@ -72,7 +72,9 @@ def resolve_target(args):
 
 def connect(host, port):
     try:
-        sock = socket.create_connection((host, port), timeout=5)
+        # IPv4 only: the board has no AAAA record, and macOS holds a .local answer 5 s waiting for one.
+        addr = socket.getaddrinfo(host, port, socket.AF_INET, socket.SOCK_STREAM)[0][4]
+        sock = socket.create_connection(addr, timeout=5)
     except socket.gaierror as e:
         raise AudioError("cannot resolve %s: %s (set ATHENA_AUDIO_HOST=<ip> to skip mDNS)" % (host, e), code=2)
     except OSError as e:
