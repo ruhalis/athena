@@ -15,7 +15,8 @@
  * buffer is full. The I2S pair runs on core 1 next to the AFE (sr.c), the
  * network pair on core 0 next to Wi-Fi, the split AUDIO-BOARD.md asks for.
  * `audio_rx` also hands every block to sr_feed(), so the wake word and the
- * VAD hear exactly what the client gets.
+ * VAD hear exactly what the client gets (not in a build without
+ * CONFIG_ATHENA_AUDIO_SR, which has no sr.c).
  *
  * This is the raw bridge the microphone and the amplifier are brought up
  * with, stages 2-4 of AUDIO-BOARD.md with the Mac as the meter: no echo
@@ -42,7 +43,9 @@
 #include "lwip/sockets.h"
 
 #include "audio.h"
+#if CONFIG_ATHENA_AUDIO_SR
 #include "sr.h"
+#endif
 
 static const char *TAG = "audio";
 
@@ -77,7 +80,7 @@ static SemaphoreHandle_t s_lock;            /* guards s_client and s_peer betwee
 static uint32_t s_mic_dropped;              /* samples the queue could not take since the last log line; audio_rx only */
 static uint32_t s_mic_backlog;              /* the deepest the queue stood since the last log line, in bytes; audio_rx only */
 static int s_client = -1;                   /* the socket audio_send may send to, -1 for none */
-static uint32_t s_client_gen;               /* counts accepted clients, under s_lock: a block half sent to one is not finished on the next */
+static volatile uint32_t s_client_gen;      /* counts accepted clients, written under s_lock: nothing queued for one client reaches the next */
 static int64_t s_sent_at;                   /* esp_timer time of the last byte the client's socket took, or of its accept; under s_lock */
 static volatile bool s_gone;                /* the peer left and audio_net is closing: stop queuing mic for it */
 static char s_peer[24];                     /* "a.b.c.d:port" for the log */
@@ -99,17 +102,16 @@ static float dbfs(float x)
  * that lost the byte alignment of its samples. The client is never dropped
  * for being slow. Each try runs under the lock so the net task cannot close
  * the socket mid-send, and the wait between tries does not, so it can; a
- * block interrupted by a change of client (s_client_gen) is abandoned, the
- * next client starts on a whole one. Only a real disconnect shuts the socket
- * down, which wakes the net task's select() to close it. */
-static void send_to_client(const uint8_t *data, size_t bytes)
+ * block meant for client `gen` is abandoned once another one has been
+ * accepted (s_client_gen), sent or half sent, so the next client starts on a
+ * whole block of its own. Only a real disconnect shuts the socket down, which
+ * wakes the net task's select() to close it. */
+static void send_to_client(const uint8_t *data, size_t bytes, uint32_t gen)
 {
     size_t off = 0;
-    uint32_t gen = 0;
     while (off < bytes) {
         if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(1000)) != pdTRUE) return;
         int fd = s_client;
-        if (off == 0) gen = s_client_gen;
         if (fd < 0 || s_gone || gen != s_client_gen) {
             xSemaphoreGive(s_lock);
             return;
@@ -163,7 +165,9 @@ static void rx_task(void *arg)
             pcm[i] = (int16_t)v;
         }
         count += frames;
+#if CONFIG_ATHENA_AUDIO_SR
         sr_feed(pcm, frames);           /* the AFE (sr.c) hears the same block the client gets; a no-op until sr_start() */
+#endif
         if (s_client >= 0 && !s_gone) {
             /* Never wait for the network here: the DMA behind this read holds
              * 60 ms. Whole blocks only, like sr_feed(): what the queue cannot
@@ -204,14 +208,25 @@ static void rx_task(void *arg)
 /* The network side of the microphone: drains the queue into the client's
  * socket at whatever pace TCP allows, a backlog in blocks of up to 40 ms so
  * a recovered link catches up at once, and throws it away while there is no
- * client. */
+ * client. A new client starts live: what the queue holds when it is accepted
+ * was captured for the one before it (a stalled client that gave way leaves
+ * up to AUDIO_MIC_BUF_MS behind) and would reach this one seconds old, so it
+ * is thrown away too. */
 static void send_task(void *arg)
 {
     (void)arg;
     static int16_t pcm[AUDIO_FRAMES * 4];
+    uint32_t client = 0;                /* the s_client_gen the queue was last drained for */
     for (;;) {
         size_t got = xStreamBufferReceive(s_mic, pcm, sizeof(pcm), portMAX_DELAY);
-        send_to_client((const uint8_t *)pcm, got);
+        uint32_t gen = s_client_gen;
+        if (gen != client) {
+            client = gen;
+            while (xStreamBufferReceive(s_mic, pcm, sizeof(pcm), 0) > 0) {
+            }
+            continue;
+        }
+        send_to_client((const uint8_t *)pcm, got, gen);
     }
 }
 

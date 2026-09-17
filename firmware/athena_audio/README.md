@@ -86,7 +86,8 @@ little-endian, 16 kHz, mono, no framing. From the moment a client connects
 the board sends the microphone; every byte the client writes is played,
 silence when nothing arrives. One client at a time: a second connection is
 closed at once, unless the first has taken nothing for 3 s (a peer that
-vanished without closing), which then gives way to it.
+vanished without closing), which then gives way to it. A new client starts
+live: what the queue still held for the one before it is thrown away.
 
 The microphone is delivered whole or not at all. A block leaves the board
 10 ms after its first sample; when the socket is full, because the link
@@ -96,10 +97,14 @@ in a moment, so a stall delays the audio and does not cut it. Only beyond
 that are the newest blocks dropped, whole, and counted on the 5 s log line;
 the client is never dropped for being slow, and a send that lwIP took only
 part of resumes where it stopped, so the byte alignment of the samples
-holds. The log line also says how deep the queue stood (`queued up to N ms`)
-whenever a stall went past 50 ms. `scripts/audio.py check` is the same
-question asked from the client's end: how late each packet lands against
-the sample clock, and whether audio went missing. A player should still
+holds. The log line also says how deep the PSRAM queue stood (`queued up to
+N ms`) whenever it passed 50 ms; lwIP's buffer fills first, so the stall
+behind that number was about half a second longer, and a shorter one never
+shows. `scripts/audio.py check` is the same question asked from the client's
+end: how late each packet lands against the sample clock, and whether audio
+went missing (a packet on its clock proves the stream whole up to it; a run
+that ends behind its clock is watched up to 4 s longer to tell a stall from
+a loss). A player should still
 drain what it receives so its own socket buffer does not fill. Without a
 network there is nothing: the board has no serial protocol, only its log.
 
@@ -128,6 +133,18 @@ because the data line floats during the slot nobody drives, and that is
 harmless, only the left slot is used.
 
 ## Wake word and VAD
+
+The whole section is one Kconfig switch, `CONFIG_ATHENA_AUDIO_SR`
+(`main/Kconfig.projbuild`, on by default). Nothing in the stream depends on
+the speech front end, it only logs, so a build without it is the raw bridge
+alone: `sr.c` is left out, ESP-SR is not linked (the app shrinks from 2.1 MB
+to 0.85 MB), core 1 carries the two I2S tasks only, and the boot log ends
+with `raw bridge only (no wake word, no vad in this build)`. For a demo that
+needs only the bridge, set `# CONFIG_ATHENA_AUDIO_SR is not set` in the
+generated `sdkconfig` (machine-local, so the tracked defaults still describe
+the real board), `idf.py build`, `idf.py -p <port> app-flash`. The models stay
+in the `model` partition, so `CONFIG_ATHENA_AUDIO_SR=y`, a build and one more
+`app-flash` bring the wake word back.
 
 `main/sr.c` runs ESP-SR's audio front end (AFE) in low-cost mode on the
 microphone blocks `audio_rx` produces, the same int16 the client gets:
@@ -193,7 +210,7 @@ scripts/audio.py play --gain 20 say.wav     # a brick-wall limiter in effect (~4
 | `audio.py`: `connection closed by the board`, exit 1 | another client holds port 7076 (the board logs `refused`), or a newer connection took over a stalled one (`gives way to`) |
 | `audio.py`: `connection refused`, exit 2 | the listener is not up: `audio unavailable` in the boot log, or a wrong host or port |
 | `audio.py` exits 3 with "board sent nothing" | the board accepted the connection but its microphone task is not producing: look for `audio: mic` lines in the log |
-| `queued up to N ms, nothing dropped` in the `audio: mic` line | the link stalled that long and the stream caught up: late, but whole |
+| `queued up to N ms, nothing dropped` in the `audio: mic` line | the link stalled for about N ms plus the half second lwIP's send buffer holds first, and the stream caught up: late, but whole |
 | `N samples dropped` in the `audio: mic` line | the network took more than about 2.5 s to accept the stream (the queue plus lwIP's send buffer): a Wi-Fi outage or a client that does not read; `audio.py check` shows it from the other end |
 | `audio unavailable` in the boot log | the I2S port, the SD_MODE pin or their GPIOs could not be opened; the line names the step |
 | `speech front end unavailable: ESP_ERR_NOT_FOUND` | the `model` partition is empty: `idf.py flash`, not `app-flash`, writes `srmodels.bin` |

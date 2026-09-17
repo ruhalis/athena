@@ -164,46 +164,81 @@ def cmd_record(sock, seconds, outpath):
 def percentile(ordered, q):
     return ordered[min(len(ordered) - 1, int(q * len(ordered)))]
 
+CHECK_TAIL_S = 0.25                    # a run may end this long after its last on-time packet
+CHECK_SETTLE_S = 4.0                   # how much longer a run that ends behind its clock is watched
+
+def _lateness(arrivals):
+    """Milliseconds each packet landed behind the fastest one of the run,
+    against the board's sample clock."""
+    t0, b0 = arrivals[0]
+    raw = [(t - t0) - (b - b0) / float(BYTES_PER_SEC) for t, b in arrivals]
+    best = min(raw)
+    return [(x - best) * 1000.0 for x in raw]
+
 def cmd_check(sock, seconds):
     """Time the microphone stream against its own sample clock. The board
     makes exactly BYTES_PER_SEC, so byte N was captured N / BYTES_PER_SEC
     after byte 0, and a packet that lands later than that (measured from the
     fastest packet of the run) waited somewhere: in the board's queue, on the
-    Wi-Fi link, in TCP. Audio the board had to drop never arrives, so the
-    stream falls behind its clock for good: a lateness that does not come
-    back down is missing audio, one that does was only a stall."""
+    Wi-Fi link, in TCP. Audio the board had to drop never arrives, so every
+    byte after it is late for good: a packet that lands on time proves the
+    stream whole up to it, and a lateness that never comes back down is
+    missing audio. A run that ends behind its clock cannot tell a stall from
+    a loss yet, so it is watched up to CHECK_SETTLE_S longer: a stall catches
+    up in that time, a loss never does."""
     arrivals = []                                  # (monotonic time, bytes so far)
-    for _samples, total in receive_for(sock, seconds):
-        if not arrivals or total != arrivals[-1][1]:
-            arrivals.append((time.monotonic(), total))
+
+    def collect(duration):
+        base = arrivals[-1][1] if arrivals else 0
+        for _samples, total in receive_for(sock, duration):
+            if not arrivals or base + total != arrivals[-1][1]:
+                arrivals.append((time.monotonic(), base + total))
+        return time.monotonic()
+
+    stopped = collect(seconds)
     if len(arrivals) < 50:
         print(NOTHING_RECEIVED if not arrivals else "too little received to judge (%d packets)" % len(arrivals), file=sys.stderr)
         return 3
-    t0, b0 = arrivals[0]
-    raw = [(t - t0) - (b - b0) / float(BYTES_PER_SEC) for t, b in arrivals]
-    best = min(raw)
-    late = [(x - best) * 1000.0 for x in raw]      # ms behind the fastest delivery
+    # On time is within one dropped block (10 ms) of the fastest packet, plus
+    # 50 ppm for the two clocks drifting apart over the run.
+    limit = 8.0 + 0.05 * seconds
+    extra = 0.0
+    while True:
+        late = _lateness(arrivals)
+        proven = max(i for i, x in enumerate(late) if x <= limit)     # the stream is whole up to this packet
+        if stopped - arrivals[proven][0] <= CHECK_TAIL_S or extra >= CHECK_SETTLE_S:
+            break
+        stopped = collect(0.5)
+        extra += 0.5
+    whole = stopped - arrivals[proven][0] <= CHECK_TAIL_S
     ordered = sorted(late)
-    elapsed = arrivals[-1][0] - t0
-    gaps = [(arrivals[i][0] - arrivals[i - 1][0]) * 1000.0 for i in range(1, len(arrivals))]
-    # The floor of the lateness at each end of the run: jitter only ever adds,
-    # so the minimum over a window is what the stream could not get back.
-    edge = max(10, min(len(late) // 4, 200))
-    lost_ms = min(late[-edge:]) - min(late[:edge])
+    t0, b0 = arrivals[0]
+    elapsed = stopped - t0
+    gaps = [(arrivals[i][0] - arrivals[i - 1][0]) * 1000.0 for i in range(1, len(arrivals))] + [(stopped - arrivals[-1][0]) * 1000.0]
     stalls = sum(1 for i in range(1, len(late)) if late[i] >= 100.0 and late[i - 1] < 100.0)
     print("received %.1f s of microphone in %.1f s: %d bytes in %d packets, %.0f Hz against the Mac's clock"
           % ((arrivals[-1][1] - b0) / float(BYTES_PER_SEC), elapsed, arrivals[-1][1], len(arrivals),
              (arrivals[-1][1] - b0) / 2.0 / elapsed if elapsed > 0 else 0.0))
+    if extra:
+        print("(%.1f s more than asked: the run ended behind its clock and was watched until it %s)"
+              % (extra, "caught up" if whole else "clearly would not catch up"))
     print("lateness behind the fastest packet: median %.0f ms, 99%% under %.0f ms, worst %.0f ms; longest silence on the socket %.0f ms"
           % (percentile(ordered, 0.5), percentile(ordered, 0.99), ordered[-1], max(gaps)))
     print("(the board adds a fixed 10 ms on top: it sends the microphone in 10 ms blocks)")
     if stalls:
-        print("%d stall(s) of 100 ms or more%s" % (stalls, "" if lost_ms > 15.0 else ": the stream stopped and caught up"))
-    if lost_ms > 15.0:
-        print("MISSING: about %.0f ms of audio never arrived; the board's `audio: mic` log line has the dropped count" % lost_ms)
+        print("%d stall(s) of 100 ms or more%s" % (stalls, ": the stream stopped and caught up" if whole else ""))
+    if whole:
+        print("whole: the last packet on its clock came %d ms before the end, nothing was dropped on the way"
+              % int(round((stopped - arrivals[proven][0]) * 1000.0)))
+        return 0
+    behind = late[proven + 1:]
+    if not behind:
+        print("MISSING: nothing arrived in the last %.1f s, the stream stopped %.1f s into the run"
+              % (stopped - arrivals[proven][0], arrivals[proven][0] - t0))
         return 1
-    print("whole: the stream ends on its clock (%d ms off the start), nothing was dropped on the way" % int(round(lost_ms)))
-    return 0
+    print("MISSING: about %.0f ms of audio never arrived, from about %.1f s into the run; the board's `audio: mic` log line has the dropped count"
+          % (min(behind), arrivals[proven + 1][0] - t0))
+    return 1
 
 def _downmix(samples, channels):
     n = len(samples) // channels

@@ -1,0 +1,20 @@
+menu "Athena audio"
+
+    config ATHENA_AUDIO_SR
+        bool "Wake word and VAD on the microphone (ESP-SR, main/sr.c)"
+        default y
+        help
+            The speech front end of stage 5: ESP-SR's AFE with WakeNet and
+            VADNet on the same microphone blocks the client gets. It only
+            logs, nothing in the stream depends on it, so a build without it
+            is the raw bridge alone: main/sr.c is left out, the ESP-SR
+            libraries are not linked, and core 1 carries the I2S tasks only.
+
+            Off for a demo that needs the bridge and nothing else: set
+            `# CONFIG_ATHENA_AUDIO_SR is not set` in the generated sdkconfig
+            (or `CONFIG_ATHENA_AUDIO_SR=n` in sdkconfig.defaults, then
+            `rm -f sdkconfig && idf.py reconfigure`), build, `idf.py app-flash`.
+            The models stay in the `model` partition, so turning it back on
+            is one more app-flash.
+
+endmenu

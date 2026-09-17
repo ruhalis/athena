@@ -5,7 +5,8 @@
  * framing. The board sends the microphone for as long as a client is
  * connected and plays whatever the client writes, silence when nothing
  * arrives. One client at a time; a second connection is closed at once,
- * unless the first has taken nothing for 3 s, which then gives way to it.
+ * unless the first has taken nothing for 3 s, which then gives way to it;
+ * a new client starts live, not on what was queued for the one before.
  * The microphone never blocks and never drops the client: what the client
  * cannot take right now, because the link stalls or it is busy playing,
  * waits (half a second in lwIP, two more in a queue) and is sent when it

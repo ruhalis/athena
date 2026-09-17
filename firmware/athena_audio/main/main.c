@@ -5,14 +5,17 @@
  * audio front end on the same microphone: the wake word and the VAD, their
  * detections on this console (sr.h; stage 5 of AUDIO-BOARD.md). No echo
  * cancellation and no hub protocol yet: the board moves sound and hears
- * the wake word, the Mac is still the brain.
+ * the wake word, the Mac is still the brain. CONFIG_ATHENA_AUDIO_SR off
+ * (Kconfig.projbuild) builds the bridge without sr.c.
  */
 #include "esp_log.h"
 
 #include "athena_wifi.h"
 #include "audio.h"
 #include "board_pins.h"
+#if CONFIG_ATHENA_AUDIO_SR
 #include "sr.h"
+#endif
 
 static const char *TAG = "athena_audio";
 
@@ -41,6 +44,7 @@ void app_main(void)
         return;
     }
 
+#if CONFIG_ATHENA_AUDIO_SR
     /* The wake word and the VAD listen to the same microphone. Without the
      * models in the `model` partition they are absent, not fatal: the raw
      * bridge is still the Mac's bench. */
@@ -50,4 +54,10 @@ void app_main(void)
     }
     ESP_LOGI(TAG, "ready: %s.local, mic out and speaker in on tcp port %d, wake word and vad on this console",
              HOSTNAME, AUDIO_TCP_PORT);
+#else
+    /* Built without CONFIG_ATHENA_AUDIO_SR (Kconfig.projbuild): the raw
+     * bridge alone, nothing else listens to the microphone. */
+    ESP_LOGI(TAG, "ready: %s.local, mic out and speaker in on tcp port %d, raw bridge only (no wake word, no vad in this build)",
+             HOSTNAME, AUDIO_TCP_PORT);
+#endif
 }
