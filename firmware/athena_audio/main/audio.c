@@ -3,10 +3,13 @@
  * bridged to one TCP client on AUDIO_TCP_PORT. See audio.h for the stream.
  *
  * Four tasks: `audio_rx` reads the microphone, folds its slot to int16 and
- * queues it; `audio_send` drains that queue into the client's socket, so a
- * Wi-Fi stall never holds up the microphone read (the I2S DMA holds only
- * 60 ms, the queue half a second, and beyond that the newest samples are
- * dropped and counted); `audio_tx` drains the playback buffer into the
+ * queues it; `audio_send` drains that queue into the client's socket and
+ * waits there when the socket is full, so a Wi-Fi stall never holds up the
+ * microphone read and never costs a sample either: the I2S DMA holds only
+ * 60 ms, but behind it lwIP's send buffer holds half a second and the queue
+ * (in PSRAM) two more, which a recovered link drains in a moment. Only
+ * beyond that are the newest blocks dropped, whole, and counted;
+ * `audio_tx` drains the playback buffer into the
  * amplifier; `audio_net` accepts the client and fills that buffer, so a Mac
  * that writes faster than real time is simply held back by TCP once the
  * buffer is full. The I2S pair runs on core 1 next to the AFE (sr.c), the
@@ -25,6 +28,7 @@
 #include <string.h>
 
 #include "freertos/FreeRTOS.h"
+#include "freertos/idf_additions.h"
 #include "freertos/semphr.h"
 #include "freertos/stream_buffer.h"
 #include "freertos/task.h"
@@ -46,14 +50,16 @@ static const char *TAG = "audio";
 #define AUDIO_DMA_DESCS         6       /* 60 ms of DMA per direction */
 #define AUDIO_PLAY_BUF_MS       500     /* how far ahead of real time a client may write before TCP holds it */
 #define AUDIO_PLAY_BUF_BYTES    (AUDIO_RATE_HZ * 2 * AUDIO_PLAY_BUF_MS / 1000)
-#define AUDIO_MIC_BUF_MS        500     /* microphone waiting for a slow network; beyond it the newest samples are dropped */
+#define AUDIO_MIC_BUF_MS        2000    /* microphone waiting for a slow network; beyond it the newest blocks are dropped */
 #define AUDIO_MIC_BUF_BYTES     (AUDIO_RATE_HZ * 2 * AUDIO_MIC_BUF_MS / 1000)
+#define AUDIO_MIC_BACKLOG_LOG_MS 50     /* a queue that stood deeper than this shows on the 5 s log line: the link stalled */
 #define AUDIO_MIC_SLOT          0       /* 0 = left slot (mic L/R to GND), 1 = right (L/R to 3V3); the log shows both */
 #define AUDIO_MIC_SHIFT         12      /* 32-bit MSB-aligned mic word to int16: >>16 is unity, every bit less is +6 dB.
                                          * +24 dB: at 14 (+12 dB) speech at a metre sat at -25..-32 dBFS and WakeNet
                                          * only fired at -19; at 12 the open office floor is about -26 dBFS RMS and
                                          * a raised voice up close clips, which the clamp below takes */
-#define AUDIO_SEND_TIMEOUT_MS   2000    /* a client that stops reading the mic this long is dropped, not waited for */
+#define AUDIO_SEND_POLL_MS      10      /* how often audio_send tries a full socket again */
+#define AUDIO_STALLED_MS        3000    /* a client whose socket took nothing for this long gives way to a new connection */
 #define AUDIO_LOG_PERIOD_US     (5 * 1000 * 1000)
 #define AUDIO_BACKLOG           1
 #define AUDIO_KEEPIDLE_S        30
@@ -68,8 +74,11 @@ static StreamBufferHandle_t s_mic;          /* int16 mono, rx -> send */
 static SemaphoreHandle_t s_lock;            /* guards s_client and s_peer between audio_net and audio_send; the
                                              * 5 s log line in audio_rx peeks at both without it, a torn peer
                                              * string there costs nothing */
-static uint32_t s_mic_dropped;              /* samples the network was too slow to take since the last log line */
+static uint32_t s_mic_dropped;              /* samples the queue could not take since the last log line; audio_rx only */
+static uint32_t s_mic_backlog;              /* the deepest the queue stood since the last log line, in bytes; audio_rx only */
 static int s_client = -1;                   /* the socket audio_send may send to, -1 for none */
+static uint32_t s_client_gen;               /* counts accepted clients, under s_lock: a block half sent to one is not finished on the next */
+static int64_t s_sent_at;                   /* esp_timer time of the last byte the client's socket took, or of its accept; under s_lock */
 static volatile bool s_gone;                /* the peer left and audio_net is closing: stop queuing mic for it */
 static char s_peer[24];                     /* "a.b.c.d:port" for the log */
 
@@ -81,32 +90,46 @@ static float dbfs(float x)
 }
 
 /* Send one block of int16 mono to the client, if there is one; without one
- * the block is discarded. The send never blocks: a client that cannot take
- * it right now (typically because it is busy playing) loses the block, not
- * the connection. Runs under the lock so the net task cannot close the
- * socket mid-send; only a real disconnect shuts it down, which wakes the net
- * task's select() to close it. */
-static void send_to_client(const int16_t *pcm, size_t bytes)
+ * the block is discarded. All of it goes out or none of it matters any more:
+ * a full socket (the link stalls, or the client is busy playing and reads
+ * slowly) is tried again every AUDIO_SEND_POLL_MS while the microphone backs
+ * up in s_mic behind this task, and a send lwIP took only part of (a
+ * non-blocking write is cut to the free send buffer) resumes where it
+ * stopped, so the client never sees a block with a hole in it or a stream
+ * that lost the byte alignment of its samples. The client is never dropped
+ * for being slow. Each try runs under the lock so the net task cannot close
+ * the socket mid-send, and the wait between tries does not, so it can; a
+ * block interrupted by a change of client (s_client_gen) is abandoned, the
+ * next client starts on a whole one. Only a real disconnect shuts the socket
+ * down, which wakes the net task's select() to close it. */
+static void send_to_client(const uint8_t *data, size_t bytes)
 {
-    if (s_client < 0) return;
-    if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(1000)) != pdTRUE) return;
-    int fd = s_client;
-    if (fd >= 0) {
-        int n = send(fd, pcm, bytes, MSG_DONTWAIT);
-        if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            /* The client is not taking the mic right now, usually because it
-             * is busy playing: never block or drop it for that, just lose
-             * this block. The 5 s log line counts it. */
-            s_mic_dropped += bytes / sizeof(int16_t);
-        } else if (n != (int)bytes) {
+    size_t off = 0;
+    uint32_t gen = 0;
+    while (off < bytes) {
+        if (xSemaphoreTake(s_lock, pdMS_TO_TICKS(1000)) != pdTRUE) return;
+        int fd = s_client;
+        if (off == 0) gen = s_client_gen;
+        if (fd < 0 || s_gone || gen != s_client_gen) {
+            xSemaphoreGive(s_lock);
+            return;
+        }
+        int n = send(fd, data + off, bytes - off, MSG_DONTWAIT);
+        if (n > 0) {
+            off += (size_t)n;
+            s_sent_at = esp_timer_get_time();
+        } else if (!(n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))) {
             if (!s_gone) {      /* a peer that closed first is logged by audio_net, not here */
-                ESP_LOGW(TAG, "%s: connection lost (sent %d of %u, errno %d)", s_peer, n, (unsigned)bytes, errno);
+                ESP_LOGW(TAG, "%s: connection lost (sent %u of %u, errno %d)", s_peer, (unsigned)off, (unsigned)bytes, errno);
             }
             shutdown(fd, SHUT_RDWR);
             s_client = -1;
+            xSemaphoreGive(s_lock);
+            return;
         }
+        xSemaphoreGive(s_lock);
+        if (off < bytes) vTaskDelay(pdMS_TO_TICKS(AUDIO_SEND_POLL_MS));
     }
-    xSemaphoreGive(s_lock);
 }
 
 static void rx_task(void *arg)
@@ -143,23 +166,33 @@ static void rx_task(void *arg)
         sr_feed(pcm, frames);           /* the AFE (sr.c) hears the same block the client gets; a no-op until sr_start() */
         if (s_client >= 0 && !s_gone) {
             /* Never wait for the network here: the DMA behind this read holds
-             * 60 ms. What the queue cannot take is lost and counted. */
+             * 60 ms. Whole blocks only, like sr_feed(): what the queue cannot
+             * take is lost and counted, and it takes AUDIO_MIC_BUF_MS of a
+             * stalled link on top of lwIP's send buffer to get there. */
             size_t bytes = frames * sizeof(int16_t);
-            size_t queued = xStreamBufferSend(s_mic, pcm, bytes, 0);
-            s_mic_dropped += (bytes - queued) / sizeof(int16_t);
+            if (xStreamBufferSpacesAvailable(s_mic) < bytes || xStreamBufferSend(s_mic, pcm, bytes, 0) != bytes) {
+                s_mic_dropped += frames;
+            }
+            size_t backlog = xStreamBufferBytesAvailable(s_mic);
+            if (backlog > s_mic_backlog) s_mic_backlog = backlog;
         }
 
         int64_t now = esp_timer_get_time();
         if (now >= next_log && count) {
             float rms[2] = { sqrtf((float)sq[0] / count), sqrtf((float)sq[1] / count) };
-            char dropped[40] = "";
+            char dropped[80] = "";
+            uint32_t backlog_ms = s_mic_backlog * 1000 / (AUDIO_RATE_HZ * sizeof(int16_t));
             if (s_mic_dropped) {
-                snprintf(dropped, sizeof(dropped), ", %lu samples dropped", (unsigned long)s_mic_dropped);
+                snprintf(dropped, sizeof(dropped), ", queued up to %lu ms, %lu samples dropped",
+                         (unsigned long)backlog_ms, (unsigned long)s_mic_dropped);
+            } else if (backlog_ms >= AUDIO_MIC_BACKLOG_LOG_MS) {
+                snprintf(dropped, sizeof(dropped), ", queued up to %lu ms, nothing dropped", (unsigned long)backlog_ms);
             }
             ESP_LOGI(TAG, "mic L %.0f dBFS (peak %.0f), R %.0f dBFS (peak %.0f), slot %c -> %s%s",
                      dbfs(rms[0]), dbfs((float)peak[0]), dbfs(rms[1]), dbfs((float)peak[1]),
                      AUDIO_MIC_SLOT ? 'R' : 'L', s_client >= 0 ? s_peer : "no client", dropped);
             s_mic_dropped = 0;
+            s_mic_backlog = 0;
             sq[0] = sq[1] = 0;
             peak[0] = peak[1] = 0;
             count = 0;
@@ -169,14 +202,16 @@ static void rx_task(void *arg)
 }
 
 /* The network side of the microphone: drains the queue into the client's
- * socket at whatever pace TCP allows, and throws it away while there is none. */
+ * socket at whatever pace TCP allows, a backlog in blocks of up to 40 ms so
+ * a recovered link catches up at once, and throws it away while there is no
+ * client. */
 static void send_task(void *arg)
 {
     (void)arg;
-    static int16_t pcm[AUDIO_FRAMES];
+    static int16_t pcm[AUDIO_FRAMES * 4];
     for (;;) {
         size_t got = xStreamBufferReceive(s_mic, pcm, sizeof(pcm), portMAX_DELAY);
-        send_to_client(pcm, got);
+        send_to_client((const uint8_t *)pcm, got);
     }
 }
 
@@ -224,8 +259,26 @@ static int listen_socket(void)
     return fd;
 }
 
+/* Close the client. audio_send may be between two tries of a send the peer
+ * no longer acknowledges: stop the mic from queuing for that peer meanwhile,
+ * and shut the socket down first so a send in flight returns now. */
+static void drop_client(int fd)
+{
+    s_gone = true;
+    shutdown(fd, SHUT_RDWR);
+    xSemaphoreTake(s_lock, portMAX_DELAY);
+    close(fd);
+    s_client = -1;
+    s_gone = false;
+    xSemaphoreGive(s_lock);
+}
+
 /* Accept a connection: the first becomes the client, any further one is
- * closed at once so the caller sees EOF instead of a silent hang. */
+ * closed at once so the caller sees EOF instead of a silent hang. The one
+ * exception is a client whose socket has taken nothing for AUDIO_STALLED_MS:
+ * that is a peer that vanished without a FIN (its Wi-Fi dropped, it was
+ * killed), which lwIP would keep retransmitting to for over a minute while
+ * the same machine, reconnecting, was refused. It gives way to the new one. */
 static int accept_client(int listen_fd, int current)
 {
     struct sockaddr_in addr;
@@ -238,14 +291,19 @@ static int accept_client(int listen_fd, int current)
     char ip[16];
     inet_ntoa_r(addr.sin_addr, ip, sizeof(ip));
     if (current >= 0) {
-        ESP_LOGW(TAG, "%s:%u refused, %s already streams", ip, ntohs(addr.sin_port), s_peer);
-        close(fd);
-        return current;
+        xSemaphoreTake(s_lock, portMAX_DELAY);
+        int64_t stalled_ms = (esp_timer_get_time() - s_sent_at) / 1000;
+        xSemaphoreGive(s_lock);
+        if (stalled_ms < AUDIO_STALLED_MS) {
+            ESP_LOGW(TAG, "%s:%u refused, %s already streams", ip, ntohs(addr.sin_port), s_peer);
+            close(fd);
+            return current;
+        }
+        ESP_LOGW(TAG, "%s: took nothing for %lld ms, gives way to %s:%u", s_peer, (long long)stalled_ms, ip, ntohs(addr.sin_port));
+        drop_client(current);
     }
 
     int on = 1, idle = AUDIO_KEEPIDLE_S, intvl = AUDIO_KEEPINTVL_S, cnt = AUDIO_KEEPCNT;
-    struct timeval sndto = { .tv_sec = AUDIO_SEND_TIMEOUT_MS / 1000, .tv_usec = (AUDIO_SEND_TIMEOUT_MS % 1000) * 1000 };
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &sndto, sizeof(sndto));
     setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &on, sizeof(on));
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPIDLE, &idle, sizeof(idle));
     setsockopt(fd, IPPROTO_TCP, TCP_KEEPINTVL, &intvl, sizeof(intvl));
@@ -254,6 +312,8 @@ static int accept_client(int listen_fd, int current)
 
     xSemaphoreTake(s_lock, portMAX_DELAY);
     snprintf(s_peer, sizeof(s_peer), "%s:%u", ip, ntohs(addr.sin_port));
+    s_client_gen++;
+    s_sent_at = esp_timer_get_time();
     s_client = fd;
     xSemaphoreGive(s_lock);
     ESP_LOGI(TAG, "%s: connected, mic out, speaker in", s_peer);
@@ -310,21 +370,15 @@ static void net_task(void *arg)
             continue;
         }
         if (client >= 0 && FD_ISSET(client, &rfds) && !read_client(client, chunk, sizeof(chunk), &carry)) {
-            /* audio_send may sit in a send() the peer no longer acknowledges,
-             * holding the lock until the send timeout: stop the mic from
-             * queuing for that peer meanwhile, and shut the socket down so
-             * the send returns now rather than at the timeout. */
-            s_gone = true;
-            shutdown(client, SHUT_RDWR);
-            xSemaphoreTake(s_lock, portMAX_DELAY);
-            close(client);
-            s_client = -1;
-            s_gone = false;
-            xSemaphoreGive(s_lock);
+            drop_client(client);
             client = -1;
             carry = 0;
         }
-        if (FD_ISSET(listen_fd, &rfds)) client = accept_client(listen_fd, client);
+        if (FD_ISSET(listen_fd, &rfds)) {
+            int accepted = accept_client(listen_fd, client);
+            if (accepted != client) carry = 0;      /* a new client, a stalled one's odd byte goes with it */
+            client = accepted;
+        }
     }
 }
 
@@ -333,7 +387,10 @@ esp_err_t audio_start(const audio_pins_t *pins)
     ESP_RETURN_ON_FALSE(pins, ESP_ERR_INVALID_ARG, TAG, "no pins");
     s_lock = xSemaphoreCreateMutex();
     s_play = xStreamBufferCreate(AUDIO_PLAY_BUF_BYTES, sizeof(int16_t));
-    s_mic = xStreamBufferCreate(AUDIO_MIC_BUF_BYTES, sizeof(int16_t));
+    /* Two seconds of microphone is 64 kB: from PSRAM, the internal heap is
+     * what Wi-Fi and the AFE live on. One writer (audio_rx), one reader
+     * (audio_send), as a stream buffer wants. */
+    s_mic = xStreamBufferCreateWithCaps(AUDIO_MIC_BUF_BYTES, sizeof(int16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     ESP_RETURN_ON_FALSE(s_lock && s_play && s_mic, ESP_ERR_NO_MEM, TAG, "no memory for the audio buffers");
 
     i2s_chan_config_t chan = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);

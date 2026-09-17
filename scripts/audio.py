@@ -7,9 +7,10 @@ connection is closed immediately. Both directions share that one socket
 as raw PCM: signed 16-bit little-endian, 16000 Hz, mono, no framing. On
 connect the board streams its microphone continuously; every byte
 written to it plays on the speaker (silence when nothing arrives). The
-board never drops the client for a slow mic read (it drops mic samples
-instead), but a play-only client should still drain what it receives so
-its own socket buffer does not fill.
+board never drops the client for a slow mic read: the microphone waits in
+the board's queue (about 2.5 s with lwIP's send buffer) and only beyond
+that are samples dropped, but a play-only client should still drain what
+it receives so its own socket buffer does not fill.
 
 Target resolution: --host (host or host:port), else $ATHENA_AUDIO_HOST
 (same form), else athena-audio.local. --port sets the audio port (default
@@ -19,7 +20,9 @@ is a different host with no audio, so ATHENA_MATRIX_HOST is not consulted.
 Subcommands: meter [SECONDS], record SECONDS OUT.wav, play FILE.wav
 (resampled/downmixed to 16 kHz mono as needed; --gain DB scales it before
 sending, clipped at full scale, --normalize lifts its peak to 0 dBFS first),
-tone [HZ] [SECONDS].
+tone [HZ] [SECONDS], check [SECONDS] (is the microphone delivered on time
+and whole: how late each packet lands against the board's sample clock, and
+whether audio went missing on the way).
 """
 
 import argparse
@@ -158,6 +161,50 @@ def cmd_record(sock, seconds, outpath):
     print("wrote %s" % outpath)
     return 0
 
+def percentile(ordered, q):
+    return ordered[min(len(ordered) - 1, int(q * len(ordered)))]
+
+def cmd_check(sock, seconds):
+    """Time the microphone stream against its own sample clock. The board
+    makes exactly BYTES_PER_SEC, so byte N was captured N / BYTES_PER_SEC
+    after byte 0, and a packet that lands later than that (measured from the
+    fastest packet of the run) waited somewhere: in the board's queue, on the
+    Wi-Fi link, in TCP. Audio the board had to drop never arrives, so the
+    stream falls behind its clock for good: a lateness that does not come
+    back down is missing audio, one that does was only a stall."""
+    arrivals = []                                  # (monotonic time, bytes so far)
+    for _samples, total in receive_for(sock, seconds):
+        if not arrivals or total != arrivals[-1][1]:
+            arrivals.append((time.monotonic(), total))
+    if len(arrivals) < 50:
+        print(NOTHING_RECEIVED if not arrivals else "too little received to judge (%d packets)" % len(arrivals), file=sys.stderr)
+        return 3
+    t0, b0 = arrivals[0]
+    raw = [(t - t0) - (b - b0) / float(BYTES_PER_SEC) for t, b in arrivals]
+    best = min(raw)
+    late = [(x - best) * 1000.0 for x in raw]      # ms behind the fastest delivery
+    ordered = sorted(late)
+    elapsed = arrivals[-1][0] - t0
+    gaps = [(arrivals[i][0] - arrivals[i - 1][0]) * 1000.0 for i in range(1, len(arrivals))]
+    # The floor of the lateness at each end of the run: jitter only ever adds,
+    # so the minimum over a window is what the stream could not get back.
+    edge = max(10, min(len(late) // 4, 200))
+    lost_ms = min(late[-edge:]) - min(late[:edge])
+    stalls = sum(1 for i in range(1, len(late)) if late[i] >= 100.0 and late[i - 1] < 100.0)
+    print("received %.1f s of microphone in %.1f s: %d bytes in %d packets, %.0f Hz against the Mac's clock"
+          % ((arrivals[-1][1] - b0) / float(BYTES_PER_SEC), elapsed, arrivals[-1][1], len(arrivals),
+             (arrivals[-1][1] - b0) / 2.0 / elapsed if elapsed > 0 else 0.0))
+    print("lateness behind the fastest packet: median %.0f ms, 99%% under %.0f ms, worst %.0f ms; longest silence on the socket %.0f ms"
+          % (percentile(ordered, 0.5), percentile(ordered, 0.99), ordered[-1], max(gaps)))
+    print("(the board adds a fixed 10 ms on top: it sends the microphone in 10 ms blocks)")
+    if stalls:
+        print("%d stall(s) of 100 ms or more%s" % (stalls, "" if lost_ms > 15.0 else ": the stream stopped and caught up"))
+    if lost_ms > 15.0:
+        print("MISSING: about %.0f ms of audio never arrived; the board's `audio: mic` log line has the dropped count" % lost_ms)
+        return 1
+    print("whole: the stream ends on its clock (%d ms off the start), nothing was dropped on the way" % int(round(lost_ms)))
+    return 0
+
 def _downmix(samples, channels):
     n = len(samples) // channels
     return array.array("h", (int(sum(samples[i * channels:(i + 1) * channels]) / channels) for i in range(n)))
@@ -283,6 +330,7 @@ def build_parser():
   audio.py play --gain 6 out.wav
   audio.py play --normalize out.wav
   audio.py tone 440 2
+  audio.py check 30
   audio.py --host 192.168.1.50 --port 7076 tone
 """
     p = argparse.ArgumentParser(
@@ -308,6 +356,8 @@ def build_parser():
     tn = sub.add_parser("tone", help="synthesize and play a sine tone")
     tn.add_argument("hz", nargs="?", type=float, default=440.0)
     tn.add_argument("seconds", nargs="?", type=float, default=2.0)
+    ck = sub.add_parser("check", help="is the mic delivered on time and whole: packet lateness against the sample clock, stalls, missing audio")
+    ck.add_argument("seconds", nargs="?", type=float, default=20.0)
     return p
 
 def main(argv=None):
@@ -324,6 +374,8 @@ def main(argv=None):
                 return cmd_play(sock, args.file, args.gain, args.normalize)
             if args.command == "tone":
                 return cmd_tone(sock, args.hz, args.seconds)
+            if args.command == "check":
+                return cmd_check(sock, args.seconds)
         finally:
             sock.close()
     except AudioError as e:

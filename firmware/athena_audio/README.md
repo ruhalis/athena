@@ -85,12 +85,23 @@ Port 7076, one TCP connection, raw PCM both ways: signed 16-bit
 little-endian, 16 kHz, mono, no framing. From the moment a client connects
 the board sends the microphone; every byte the client writes is played,
 silence when nothing arrives. One client at a time: a second connection is
-closed at once. The microphone never blocks or drops the client: whatever
-the client cannot take right now, because the link stalls or it is busy
-sending playback, is lost and counted on the 5 s log line rather than
-closing the connection. A player should still drain what it receives so its
-own socket buffer does not fill. Without a network there is nothing: the
-board has no serial protocol, only its log.
+closed at once, unless the first has taken nothing for 3 s (a peer that
+vanished without closing), which then gives way to it.
+
+The microphone is delivered whole or not at all. A block leaves the board
+10 ms after its first sample; when the socket is full, because the link
+stalls or the client reads slowly, the blocks wait: half a second in lwIP's
+send buffer and two more in a queue in PSRAM, which a recovered link drains
+in a moment, so a stall delays the audio and does not cut it. Only beyond
+that are the newest blocks dropped, whole, and counted on the 5 s log line;
+the client is never dropped for being slow, and a send that lwIP took only
+part of resumes where it stopped, so the byte alignment of the samples
+holds. The log line also says how deep the queue stood (`queued up to N ms`)
+whenever a stall went past 50 ms. `scripts/audio.py check` is the same
+question asked from the client's end: how late each packet lands against
+the sample clock, and whether audio went missing. A player should still
+drain what it receives so its own socket buffer does not fill. Without a
+network there is nothing: the board has no serial protocol, only its log.
 
 On the I2S bus the mic delivers 24 bits MSB-aligned in 32-bit slots. The
 firmware takes the left slot (`AUDIO_MIC_SLOT`), shifts it right by 12 bits
@@ -179,10 +190,11 @@ scripts/audio.py play --gain 20 say.wav     # a brick-wall limiter in effect (~4
 | Tone plays at half level | the amp's SD pin is not on GPIO16 (floating selects the stereo average); check the wire and the `sd_mode 16` in the boot log |
 | Board resets when sound plays | the 5 V supply sags: the 1000 µF cap, GAIN to VIN, the amp on the 5 V bus instead of the laptop's USB |
 | Hiss that follows the face | coupling from the matrix: shorter mic wires, away from the ribbon and the speaker leads, 100 nF at the mic's VDD |
-| `audio.py`: `connection closed by the board`, exit 1 | another client holds port 7076 (the board logs `refused`) |
+| `audio.py`: `connection closed by the board`, exit 1 | another client holds port 7076 (the board logs `refused`), or a newer connection took over a stalled one (`gives way to`) |
 | `audio.py`: `connection refused`, exit 2 | the listener is not up: `audio unavailable` in the boot log, or a wrong host or port |
 | `audio.py` exits 3 with "board sent nothing" | the board accepted the connection but its microphone task is not producing: look for `audio: mic` lines in the log |
-| `N samples dropped` in the `audio: mic` line | the network took longer than half a second to accept the stream: Wi-Fi jitter or a client that reads too slowly |
+| `queued up to N ms, nothing dropped` in the `audio: mic` line | the link stalled that long and the stream caught up: late, but whole |
+| `N samples dropped` in the `audio: mic` line | the network took more than about 2.5 s to accept the stream (the queue plus lwIP's send buffer): a Wi-Fi outage or a client that does not read; `audio.py check` shows it from the other end |
 | `audio unavailable` in the boot log | the I2S port, the SD_MODE pin or their GPIOs could not be opened; the line names the step |
 | `speech front end unavailable: ESP_ERR_NOT_FOUND` | the `model` partition is empty: `idf.py flash`, not `app-flash`, writes `srmodels.bin` |
 | `speech front end unavailable: ESP_ERR_NOT_SUPPORTED` | `SR_INPUT_FORMAT` names more channels than `sr_feed()` carries; `sr.c` says which |

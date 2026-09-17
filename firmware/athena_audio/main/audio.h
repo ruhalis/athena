@@ -4,11 +4,15 @@
  * Format both ways: signed 16-bit little-endian, AUDIO_RATE_HZ, mono, no
  * framing. The board sends the microphone for as long as a client is
  * connected and plays whatever the client writes, silence when nothing
- * arrives. One client at a time; a second connection is closed at once. The
- * microphone never blocks or drops the client: whatever the client cannot
- * take right now, because the link stalls or it is busy playing, is lost and
- * counted on the 5 s log line. The client is closed only when it goes away.
- * scripts/audio.py is the Mac end for a bench test.
+ * arrives. One client at a time; a second connection is closed at once,
+ * unless the first has taken nothing for 3 s, which then gives way to it.
+ * The microphone never blocks and never drops the client: what the client
+ * cannot take right now, because the link stalls or it is busy playing,
+ * waits (half a second in lwIP, two more in a queue) and is sent when it
+ * can, so a stall delays the stream and does not cut it; only beyond that
+ * are whole blocks lost and counted on the 5 s log line.
+ * scripts/audio.py is the Mac end for a bench test, `check` its meter for
+ * this contract.
  */
 #pragma once
 
